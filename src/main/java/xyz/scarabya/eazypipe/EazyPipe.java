@@ -26,36 +26,29 @@ import java.util.logging.Logger;
  */
 public class EazyPipe {
     
-    private final ConcurrentLinkedQueue channelIn;
-    private final ConcurrentLinkedQueue channelOut;
-    private final Object job;
-    private final String methodName;
+    private final Pipeable pipe;
     
-    private EazyPipe(ConcurrentLinkedQueue channelIn, Object job, String methodName, Object args)
+    private EazyPipe(Pipeable prevPipe, Pipeable newPipe, Object args)
     {
-        this.channelIn = channelIn;
-        this.channelOut = new ConcurrentLinkedQueue();
-        this.job = job;
-        this.methodName = methodName;
+        pipe = newPipe;
+        if(prevPipe != null)
+            pipe.linkPipe(prevPipe);
         runThread(args);
     }
     
     public EazyPipe()
     {
-        this.job = null;
-        this.methodName = null;
-        this.channelIn = null;
-        this.channelOut = null;
+        pipe = null;
     }
     
-    public final EazyPipe runChain(Object nextJob, String nextMethodName)
+    public final EazyPipe runChain(Pipeable nextPipeable)
     {
-        return new EazyPipe(channelOut, nextJob, nextMethodName, null);
+        return new EazyPipe(pipe, nextPipeable, null);
     }
     
-    public final EazyPipe runChain(Object nextJob, String nextMethodName, Object args)
+    public final EazyPipe runChain(Pipeable nextPipeable, Object args)
     {
-        return new EazyPipe(channelOut, nextJob, nextMethodName, args);
+        return new EazyPipe(pipe, nextPipeable, args);
     }
     
     private void runThread(final Object args)
@@ -68,9 +61,9 @@ public class EazyPipe {
                 try
                 {
                     if(args == null)
-                        job.getClass().getDeclaredMethod(methodName, ConcurrentLinkedQueue.class, ConcurrentLinkedQueue.class).invoke(job, channelIn, channelOut);
+                        pipe.object.getClass().getDeclaredMethod(pipe.method, Pipeable.class).invoke(pipe.object, pipe);
                     else
-                        job.getClass().getDeclaredMethod(methodName, ConcurrentLinkedQueue.class, ConcurrentLinkedQueue.class, args.getClass()).invoke(job, channelIn, channelOut, args);
+                        pipe.object.getClass().getDeclaredMethod(pipe.method, Pipeable.class, args.getClass()).invoke(pipe.object, pipe, args);
                 }
                 catch (NoSuchMethodException ex)
                 {
@@ -99,6 +92,6 @@ public class EazyPipe {
     
     public final ConcurrentLinkedQueue getOutput()
     {
-        return channelOut;
+        return pipe.channelOut;
     }    
 }
