@@ -42,7 +42,7 @@ public class EazyPipe {
         pipe = null;
     }
     
-    public final EazyPipe runChain(Pipeable nextPipeable)
+    public final EazyPipe runPipe(Pipeable nextPipeable)
     {
         return new EazyPipe(pipe, nextPipeable);
     }
