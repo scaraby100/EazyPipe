@@ -33,7 +33,8 @@ public class EazyPipe {
         pipe = newPipe;
         if(prevPipe != null)
             pipe.linkPipe(prevPipe);
-        runThread();
+        for (int i = 0; i < pipe.thread; i++)
+            runThread();
     }
     
     public EazyPipe()
