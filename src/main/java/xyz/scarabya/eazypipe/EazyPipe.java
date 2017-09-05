@@ -56,10 +56,7 @@ public class EazyPipe {
             {
                 try
                 {
-                    if(pipe.args == null)
-                        pipe.object.getClass().getDeclaredMethod(pipe.method, Pipeable.class).invoke(pipe.object, pipe);
-                    else
-                        pipe.object.getClass().getDeclaredMethod(pipe.method, Pipeable.class, pipe.args.getClass()).invoke(pipe.object, pipe, pipe.args);
+                    pipe.object.getClass().getDeclaredMethod(pipe.method, Pipeable.class).invoke(pipe.object, pipe);
                 }
                 catch (NoSuchMethodException ex)
                 {

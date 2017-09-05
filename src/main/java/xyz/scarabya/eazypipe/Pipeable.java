@@ -79,4 +79,9 @@ public class Pipeable {
     {
         return channelIn.poll();
     }
+    
+    public Object args()
+    {
+        return args;
+    }
 }
