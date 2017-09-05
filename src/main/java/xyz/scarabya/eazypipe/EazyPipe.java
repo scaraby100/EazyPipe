@@ -28,12 +28,12 @@ public class EazyPipe {
     
     private final Pipeable pipe;
     
-    private EazyPipe(Pipeable prevPipe, Pipeable newPipe, Object args)
+    private EazyPipe(Pipeable prevPipe, Pipeable newPipe)
     {
         pipe = newPipe;
         if(prevPipe != null)
             pipe.linkPipe(prevPipe);
-        runThread(args);
+        runThread();
     }
     
     public EazyPipe()
@@ -43,15 +43,10 @@ public class EazyPipe {
     
     public final EazyPipe runChain(Pipeable nextPipeable)
     {
-        return new EazyPipe(pipe, nextPipeable, null);
+        return new EazyPipe(pipe, nextPipeable);
     }
     
-    public final EazyPipe runChain(Pipeable nextPipeable, Object args)
-    {
-        return new EazyPipe(pipe, nextPipeable, args);
-    }
-    
-    private void runThread(final Object args)
+    private void runThread()
     {
         Thread thread = new Thread()
         {
@@ -60,10 +55,10 @@ public class EazyPipe {
             {
                 try
                 {
-                    if(args == null)
+                    if(pipe.args == null)
                         pipe.object.getClass().getDeclaredMethod(pipe.method, Pipeable.class).invoke(pipe.object, pipe);
                     else
-                        pipe.object.getClass().getDeclaredMethod(pipe.method, Pipeable.class, args.getClass()).invoke(pipe.object, pipe, args);
+                        pipe.object.getClass().getDeclaredMethod(pipe.method, Pipeable.class, pipe.args.getClass()).invoke(pipe.object, pipe, pipe.args);
                 }
                 catch (NoSuchMethodException ex)
                 {

@@ -26,12 +26,33 @@ public class Pipeable {
     protected final ConcurrentLinkedQueue channelOut;
     protected final Object object;
     protected final String method;
+    protected final Object args;
+    protected final int thread;
 
     public Pipeable(Object object, String method) {
         this.channelIn = null;
         this.channelOut = new ConcurrentLinkedQueue();
         this.object = object;
         this.method = method;
+        this.args = null;
+        this.thread = 1;
+    }
+    
+    public Pipeable(Object object, String method, Object args) {
+        this.channelIn = null;
+        this.channelOut = new ConcurrentLinkedQueue();
+        this.object = object;
+        this.method = method;
+        this.args = args;
+        this.thread = 1;
+    }
+    
+    public Pipeable(Object object, String method, int thread) {
+        throw new UnsupportedOperationException("Not supported yet.");
+    }
+    
+    public Pipeable(Object object, String method, int thread, Object args) {
+        throw new UnsupportedOperationException("Not supported yet.");
     }
     
     protected void linkPipe(Pipeable inputPipe)
