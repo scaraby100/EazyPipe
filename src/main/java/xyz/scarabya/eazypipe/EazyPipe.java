@@ -16,6 +16,8 @@
 package xyz.scarabya.eazypipe;
 
 import java.lang.reflect.InvocationTargetException;
+import java.util.Map;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.logging.Level;
 import java.util.logging.Logger;
@@ -27,27 +29,41 @@ import java.util.logging.Logger;
 public class EazyPipe {
     
     private final Pipeable pipe;
+    private ThreadPipe threadPipe[];
+    private PipeLink pipeLink;
+    private int threadIdCounter;
+    private final Map<Integer, Boolean> isReady;
     
-    private EazyPipe(Pipeable prevPipe, Pipeable newPipe)
+    private EazyPipe(ThreadPipe prevPipe, Pipeable newPipe)
     {
         pipe = newPipe;
-        if(prevPipe != null)
-            pipe.linkPipe(prevPipe);
+        threadPipe = new ThreadPipe[pipe.thread];
+        isReady = new ConcurrentHashMap();
+        pipeLink = new PipeLink(prevPipe.pipeLink);
+        
         for (int i = 0; i < pipe.thread; i++)
-            runThread();
+        {
+            int threadIndex = threadIdCounter;
+            threadIdCounter++;
+            isReady.put(threadIndex, false);
+            threadPipe[i] = new ThreadPipe(pipe, pipeLink, threadIndex);
+            runThread(i);
+        }
+            
     }
     
     public EazyPipe()
     {
         pipe = null;
+        isReady = null;
     }
     
     public final EazyPipe runPipe(Pipeable nextPipeable)
     {
-        return new EazyPipe(pipe, nextPipeable);
+        return new EazyPipe(threadPipe[0], nextPipeable);
     }
     
-    private void runThread()
+    private void runThread(final int threadId)
     {
         Thread thread = new Thread()
         {
@@ -56,7 +72,13 @@ public class EazyPipe {
             {
                 try
                 {
-                    pipe.object.getClass().getDeclaredMethod(pipe.method, Pipeable.class).invoke(pipe.object, pipe);
+                    //final ThreadPipe threadPipe = new ThreadPipe(pipe, threadIndex);
+                    pipe.object.getClass().getDeclaredMethod(pipe.method, Pipeable.class).invoke(pipe.object, threadPipe[threadId]);
+                    isReady.put(threadId, true);
+                    if(pipe.callbackObject != null && areAllReady())
+                    {
+                        pipe.callbackObject.getClass().getDeclaredMethod(pipe.callbackMethod).invoke(pipe.object);
+                    }
                 }
                 catch (NoSuchMethodException ex)
                 {
@@ -79,12 +101,24 @@ public class EazyPipe {
                     Logger.getLogger(EazyPipe.class.getName()).log(Level.SEVERE, null, ex);
                 }
             }
+            
+            private boolean areAllReady()
+            {
+                for(boolean ready : isReady.values())
+                    if(!ready) return false;
+                return true;
+            }
         };
         thread.start();
     }
     
     public final ConcurrentLinkedQueue getOutput()
     {
-        return pipe.channelOut;
-    }    
+        return pipeLink.getOutputChannel();
+    }
+    
+    public final void startAutoThreadManager()
+    {
+        
+    }
 }

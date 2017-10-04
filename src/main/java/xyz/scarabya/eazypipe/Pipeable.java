@@ -15,69 +15,97 @@
  */
 package xyz.scarabya.eazypipe;
 
-import java.util.concurrent.ConcurrentLinkedQueue;
-
 /**
  *
  * @author Alessandro Patriarca
  */
 public class Pipeable {
-    protected ConcurrentLinkedQueue channelIn;
-    protected final ConcurrentLinkedQueue channelOut;
     protected final Object object;
     protected final String method;
     protected final Object args;
     protected final int thread;
+    protected final Object callbackObject;
+    protected final String callbackMethod;
 
     public Pipeable(Object object, String method) {
-        this.channelIn = null;
-        this.channelOut = new ConcurrentLinkedQueue();
         this.object = object;
         this.method = method;
         this.args = null;
         this.thread = 1;
+        this.callbackObject = null;
+        this.callbackMethod = null;
     }
     
     public Pipeable(Object object, String method, Object args) {
-        this.channelIn = null;
-        this.channelOut = new ConcurrentLinkedQueue();
         this.object = object;
         this.method = method;
         this.args = args;
         this.thread = 1;
+        this.callbackObject = null;
+        this.callbackMethod = null;
     }
     
     public Pipeable(Object object, String method, int thread) {
-        this.channelIn = null;
-        this.channelOut = new ConcurrentLinkedQueue();
         this.object = object;
         this.method = method;
         this.args = null;
         this.thread = thread;
+        this.callbackObject = null;
+        this.callbackMethod = null;
     }
     
     public Pipeable(Object object, String method, int thread, Object args) {
-        this.channelIn = null;
-        this.channelOut = new ConcurrentLinkedQueue();
         this.object = object;
         this.method = method;
         this.args = args;
         this.thread = thread;
+        this.callbackObject = null;
+        this.callbackMethod = null;
     }
     
-    protected void linkPipe(Pipeable inputPipe)
-    {
-        this.channelIn = inputPipe.channelOut;
+    public Pipeable(Object object, String method, Object callbackObject, String callbackMethod) {
+        this.object = object;
+        this.method = method;
+        this.args = null;
+        this.thread = 1;
+        this.callbackObject = null;
+        this.callbackMethod = null;
     }
     
-    public void output(Object objectToAdd)
-    {
-        channelOut.add(objectToAdd);
+    public Pipeable(Object object, String method, Object args, Object callbackObject, String callbackMethod) {
+        this.object = object;
+        this.method = method;
+        this.args = args;
+        this.thread = 1;
+        this.callbackObject = null;
+        this.callbackMethod = null;
     }
     
-    public Object input()
-    {
-        return channelIn.poll();
+    public Pipeable(Object object, String method, int thread, Object callbackObject, String callbackMethod) {
+        this.object = object;
+        this.method = method;
+        this.args = null;
+        this.thread = thread;
+        this.callbackObject = null;
+        this.callbackMethod = null;
+    }
+    
+    public Pipeable(Object object, String method, int thread, Object args, Object callbackObject, String callbackMethod) {
+        this.object = object;
+        this.method = method;
+        this.args = args;
+        this.thread = thread;
+        this.callbackObject = null;
+        this.callbackMethod = null;
+    }
+    
+    protected Pipeable(Pipeable originalPipe, long pipeId) {
+        this.object = originalPipe.object;
+        this.method = originalPipe.method;
+        this.args = originalPipe.args;
+        this.thread = originalPipe.thread;
+        this.callbackObject = originalPipe.callbackObject;
+        this.callbackMethod = originalPipe.callbackMethod;
     }
     
     public Object args()
