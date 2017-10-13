@@ -30,16 +30,16 @@ public class EazyPipe {
     
     private final Pipeable pipe;
     private ThreadPipe threadPipe[];
-    private PipeLink pipeLink;
+    private final PipeLink pipeLink;
     private int threadIdCounter;
     private final Map<Integer, Boolean> isReady;
     
-    private EazyPipe(ThreadPipe prevPipe, Pipeable newPipe)
+    private EazyPipe(PipeLink pipeLink, Pipeable newPipe)
     {
         pipe = newPipe;
         threadPipe = new ThreadPipe[pipe.thread];
         isReady = new ConcurrentHashMap();
-        pipeLink = new PipeLink(prevPipe.pipeLink);
+        this.pipeLink = new PipeLink(pipeLink);
         
         for (int i = 0; i < pipe.thread; i++)
         {
@@ -55,12 +55,13 @@ public class EazyPipe {
     public EazyPipe()
     {
         pipe = null;
-        isReady = null;
+        pipeLink = new PipeLink();
+        isReady = null;        
     }
     
     public final EazyPipe runPipe(Pipeable nextPipeable)
     {
-        return new EazyPipe(threadPipe[0], nextPipeable);
+        return new EazyPipe(pipeLink, nextPipeable);
     }
     
     private void runThread(final int threadId)
@@ -73,7 +74,9 @@ public class EazyPipe {
                 try
                 {
                     //final ThreadPipe threadPipe = new ThreadPipe(pipe, threadIndex);
-                    pipe.object.getClass().getDeclaredMethod(pipe.method, Pipeable.class).invoke(pipe.object, threadPipe[threadId]);
+                    System.out.println("Calling " + pipe.method + " from class " +pipe.object.getClass().toString());
+                    System.out.println("pipe.object = " + pipe.object.toString() + ";  threadId = " +threadId + "; threadPipe[threadId] = "+ threadPipe[threadId].toString());
+                    pipe.object.getClass().getDeclaredMethod(pipe.method, ThreadPipe.class).invoke(pipe.object, threadPipe[threadId]);
                     isReady.put(threadId, true);
                     if(pipe.callbackObject != null && areAllReady())
                     {
@@ -114,7 +117,7 @@ public class EazyPipe {
     
     public final ConcurrentLinkedQueue getOutput()
     {
-        return pipeLink.getOutputChannel();
+        return threadPipe[0].pipeLink.getOutputChannel();
     }
     
     public final void startAutoThreadManager()
