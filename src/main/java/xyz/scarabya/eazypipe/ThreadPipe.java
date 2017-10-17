@@ -21,8 +21,8 @@ package xyz.scarabya.eazypipe;
  */
 public class ThreadPipe {
     protected final PipeLink pipeLink;
-    protected final Object args;
-    protected final long pipeId;
+    private final Object args;
+    private final long pipeId;
     private boolean stop = false;
     
     protected ThreadPipe(Pipeable originalPipe, PipeLink pipeLink, long pipeId) {
@@ -50,4 +50,10 @@ public class ThreadPipe {
     {
         return args;
     }
+    
+    public boolean run()
+    {
+        return !stop;
+    }
+    
 }

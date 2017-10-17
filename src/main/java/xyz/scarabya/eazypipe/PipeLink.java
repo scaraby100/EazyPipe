@@ -48,4 +48,19 @@ public class PipeLink
         return channelOut.poll();
     }
     
+    protected long getOutputChannelSize()
+    {
+        return channelOut.size();
+    }
+    
+    protected long getInputChannelSize()
+    {
+        return channelIn.size();
+    }
+    
+    protected boolean hasInputChannel()
+    {
+        return channelIn != null;
+    }
+    
 }
