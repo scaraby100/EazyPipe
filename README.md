@@ -13,7 +13,7 @@ EazyPipe start = new EazyPipe();
 ```java
 public class YourProducerClass
 {
-  public void yourProducerMethod(Pipeable pipe)
+  public void yourProducerMethod(ThreadPipe pipe)
   {
     ...
     pipe.output("I'm a producer");
@@ -22,7 +22,7 @@ public class YourProducerClass
 
 public class YourConsumerClass
 {
-  public void yourConsumerMethod(Pipeable pipe)
+  public void yourConsumerMethod(ThreadPipe pipe)
   {
     ...
     pipe.output(pipe.input() + ", and I'm a consumer!");
@@ -44,7 +44,7 @@ Pipeable pipeCons = new Pipeable(consumer, "yourConsumerMethod");
 EasyPipe pipeOut = start.runPipe(pipeProd).runPipe(pipeCons);
 ```
 
-## Output fetching example
+## Output fetching example (obsolete)
 ```java
 ConcurrentLinkedQueue channel = pipeOut.getOutput();
 while (true)
