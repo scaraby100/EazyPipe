@@ -35,6 +35,7 @@ public class EazyPipe {
     private final Map<Integer, Boolean> isReady;
     private final EazyPipe prevEazyPipe;
     private final long eazyPipeId;
+    private boolean isStopRequestDone;
     
     private EazyPipe(EazyPipe prevEazyPipe, PipeLink pipeLink, Pipeable newPipe, long eazyPipeId)
     {
@@ -145,7 +146,7 @@ public class EazyPipe {
         if (pipeLink.hasInputChannel())
             return pipeLink.getInputChannelSize();
         else
-            return threadIdCounter;
+            return 1;
     }
     
     protected EazyPipe getPrevEazyPipe()
@@ -160,27 +161,26 @@ public class EazyPipe {
     
     protected boolean isOptimizable()
     {
-        return pipe.optimizable && (getInputSize() > threadIdCounter-1);
+        return pipe.optimizable && (getInputSize() > threadIdCounter);
     }
     
-    protected void removeThread()
+    protected void removeThread() throws InterruptedException
     {
         int actualThreadId = threadIdCounter -1;
         threadPipe.get(actualThreadId).stopThread();
-        int i = 0;
         while(!isReady.get(actualThreadId))
         {
-            /*if(i == 10000000)
-            {
-                System.out.println("Stopping thread "+actualThreadId+" of " +pipe.method + " method from class " +pipe.object.getClass().toString()+" ...");
-                i = 0;
-            }
-            i++;*/
+            pause(100);
         }
         threadPipe.remove(actualThreadId);
         isReady.remove(actualThreadId);
         threadIdCounter--;
         System.out.println("Stopped thread "+actualThreadId+" of " +pipe.method + " method from class " +pipe.object.getClass().toString());
+    }
+    
+    protected void pause(int time) throws InterruptedException
+    {
+        Thread.sleep(time);
     }
     
     protected void addThread()

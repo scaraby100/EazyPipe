@@ -23,14 +23,6 @@ public class ThreadPipeManager
             {
                 while(true)
                 {
-                    try
-                    {
-                        Thread.sleep(100);
-                    }
-                    catch (InterruptedException ex)
-                    {
-                        Logger.getLogger(ThreadPipeManager.class.getName()).log(Level.SEVERE, null, ex);
-                    }
                     EazyPipe[] scoreBoard = new EazyPipe[1];
                     int i = 0;
                     scoreBoard[i] = eazyPipe;
@@ -48,11 +40,18 @@ public class ThreadPipeManager
                         System.out.println("; queue size: "+item.getInputSize());
                         i++;
                     }
-                    optimize(scoreBoard);
+                    try
+                    {
+                        optimize(scoreBoard);
+                    }
+                    catch (InterruptedException ex)
+                    {
+                        Logger.getLogger(ThreadPipeManager.class.getName()).log(Level.SEVERE, null, ex);
+                    }
                 }                
             }
             
-            private boolean optimize(EazyPipe[] scoreBoard)
+            private boolean optimize(EazyPipe[] scoreBoard) throws InterruptedException
             {
                 int i = 0;
                 boolean optimized = false;
@@ -74,6 +73,7 @@ public class ThreadPipeManager
                     }
                     i++;
                 }
+                Thread.sleep(100);
                 return optimized;
             }
             
