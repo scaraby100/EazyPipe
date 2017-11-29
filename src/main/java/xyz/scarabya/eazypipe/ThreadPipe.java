@@ -20,7 +20,7 @@ package xyz.scarabya.eazypipe;
  * @author Alessandro Patriarca
  */
 public class ThreadPipe {
-    protected final PipeLink pipeLink;
+    private final PipeLink pipeLink;
     private final Object args;
     private boolean stop = false;
     

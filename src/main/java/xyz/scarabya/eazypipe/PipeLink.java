@@ -18,14 +18,14 @@ public class PipeLink
 
     protected PipeLink(PipeLink prevPipeLink)
     {
-        this.channelIn = prevPipeLink.channelOut;
+        this.channelIn = prevPipeLink == null ? null : prevPipeLink.channelOut;
         this.channelOut = new ConcurrentLinkedQueue();
     }
     
-    protected PipeLink()
+    private PipeLink()
     {
         this.channelIn = null;
-        this.channelOut = new ConcurrentLinkedQueue();
+        this.channelOut = null;
     }
     
     protected void output(Object objectToAdd)
