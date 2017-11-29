@@ -23,7 +23,7 @@ public class Pipeable {
     protected final Object object;
     protected final String method;
     protected final Object args;
-    protected final int thread;
+    protected final int nThread;
     protected final Object callbackObject;
     protected final String callbackMethod;
     protected final boolean optimizable;
@@ -32,7 +32,7 @@ public class Pipeable {
         this.object = object;
         this.method = method;
         this.args = null;
-        this.thread = 1;
+        this.nThread = 1;
         this.callbackObject = null;
         this.callbackMethod = null;
         this.optimizable = false;
@@ -42,7 +42,7 @@ public class Pipeable {
         this.object = object;
         this.method = method;
         this.args = args;
-        this.thread = 1;
+        this.nThread = 1;
         this.callbackObject = null;
         this.callbackMethod = null;
         this.optimizable = false;
@@ -52,7 +52,7 @@ public class Pipeable {
         this.object = object;
         this.method = method;
         this.args = null;
-        this.thread = thread;
+        this.nThread = thread;
         this.callbackObject = null;
         this.callbackMethod = null;
         this.optimizable = false;
@@ -62,7 +62,7 @@ public class Pipeable {
         this.object = object;
         this.method = method;
         this.args = args;
-        this.thread = thread;
+        this.nThread = thread;
         this.callbackObject = null;
         this.callbackMethod = null;
         this.optimizable = false;
@@ -72,7 +72,7 @@ public class Pipeable {
         this.object = object;
         this.method = method;
         this.args = null;
-        this.thread = 1;
+        this.nThread = 1;
         this.callbackObject = callbackObject;
         this.callbackMethod = callbackMethod;
         this.optimizable = false;
@@ -82,7 +82,7 @@ public class Pipeable {
         this.object = object;
         this.method = method;
         this.args = args;
-        this.thread = 1;
+        this.nThread = 1;
         this.callbackObject = callbackObject;
         this.callbackMethod = callbackMethod;
         this.optimizable = false;
@@ -92,7 +92,7 @@ public class Pipeable {
         this.object = object;
         this.method = method;
         this.args = null;
-        this.thread = thread;
+        this.nThread = thread;
         this.callbackObject = callbackObject;
         this.callbackMethod = callbackMethod;
         this.optimizable = false;
@@ -102,7 +102,7 @@ public class Pipeable {
         this.object = object;
         this.method = method;
         this.args = args;
-        this.thread = thread;
+        this.nThread = thread;
         this.callbackObject = callbackObject;
         this.callbackMethod = callbackMethod;
         this.optimizable = false;
@@ -112,7 +112,7 @@ public class Pipeable {
         this.object = object;
         this.method = method;
         this.args = null;
-        this.thread = 1;
+        this.nThread = 1;
         this.callbackObject = null;
         this.callbackMethod = null;
         this.optimizable = optimizable;
@@ -122,7 +122,7 @@ public class Pipeable {
         this.object = object;
         this.method = method;
         this.args = args;
-        this.thread = 1;
+        this.nThread = 1;
         this.callbackObject = null;
         this.callbackMethod = null;
         this.optimizable = optimizable;
@@ -132,7 +132,7 @@ public class Pipeable {
         this.object = object;
         this.method = method;
         this.args = null;
-        this.thread = thread;
+        this.nThread = thread;
         this.callbackObject = null;
         this.callbackMethod = null;
         this.optimizable = optimizable;
@@ -142,7 +142,7 @@ public class Pipeable {
         this.object = object;
         this.method = method;
         this.args = args;
-        this.thread = thread;
+        this.nThread = thread;
         this.callbackObject = null;
         this.callbackMethod = null;
         this.optimizable = optimizable;
@@ -152,7 +152,7 @@ public class Pipeable {
         this.object = object;
         this.method = method;
         this.args = null;
-        this.thread = 1;
+        this.nThread = 1;
         this.callbackObject = callbackObject;
         this.callbackMethod = callbackMethod;
         this.optimizable = optimizable;
@@ -162,7 +162,7 @@ public class Pipeable {
         this.object = object;
         this.method = method;
         this.args = args;
-        this.thread = 1;
+        this.nThread = 1;
         this.callbackObject = callbackObject;
         this.callbackMethod = callbackMethod;
         this.optimizable = optimizable;
@@ -172,7 +172,7 @@ public class Pipeable {
         this.object = object;
         this.method = method;
         this.args = null;
-        this.thread = thread;
+        this.nThread = thread;
         this.callbackObject = callbackObject;
         this.callbackMethod = callbackMethod;
         this.optimizable = optimizable;
@@ -182,7 +182,7 @@ public class Pipeable {
         this.object = object;
         this.method = method;
         this.args = args;
-        this.thread = thread;
+        this.nThread = thread;
         this.callbackObject = callbackObject;
         this.callbackMethod = callbackMethod;
         this.optimizable = optimizable;

@@ -32,50 +32,36 @@ public class EazyPipe {
     private final Map<Integer, ThreadPipe> threadPipe;
     private final PipeLink pipeLink;
     private int threadIdCounter;
-    private final Map<Integer, Boolean> isReady;
+    private final Map<Integer, Thread> threads;
     private final EazyPipe prevEazyPipe;
     private final long eazyPipeId;
-    private boolean isStopRequestDone;
     
     private EazyPipe(EazyPipe prevEazyPipe, PipeLink pipeLink, Pipeable newPipe, long eazyPipeId)
     {
         pipe = newPipe;
         this.prevEazyPipe = prevEazyPipe;
         threadPipe = new ConcurrentHashMap();
-        isReady = new ConcurrentHashMap();
+        threads = new ConcurrentHashMap();
         this.pipeLink = new PipeLink(pipeLink);
-        threadIdCounter = pipe.thread;
+        threadIdCounter = pipe.nThread;
         this.eazyPipeId = eazyPipeId;
-        for (int i = 0; i < pipe.thread; i++)
+        for (int i = 0; i < pipe.nThread; i++)
         {
-            isReady.put(i, false);
-            threadPipe.put(i, new ThreadPipe(pipe, this.pipeLink, i));
-            runThread(i);
+            threadPipe.put(i, new ThreadPipe(pipe, this.pipeLink));
+            threads.put(i, runThread(i));
         }            
     }
     
     protected EazyPipe(Pipeable newPipe)
     {
-        pipe = newPipe;
-        this.prevEazyPipe = null;
-        threadPipe = new ConcurrentHashMap();
-        isReady = new ConcurrentHashMap();
-        this.pipeLink = new PipeLink();
-        threadIdCounter = pipe.thread;
-        eazyPipeId = 0;
-        for (int i = 0; i < pipe.thread; i++)
-        {
-            isReady.put(i, false);
-            threadPipe.put(i, new ThreadPipe(pipe, this.pipeLink, i));
-            runThread(i);
-        }
+        this(null, null, newPipe, 0);
     }
     
     private EazyPipe()
     {
         pipeLink = null;
         pipe = null;
-        isReady = null;
+        threads = null;
         prevEazyPipe = null;
         threadPipe = null;
         eazyPipeId = 0;
@@ -86,7 +72,7 @@ public class EazyPipe {
         return new EazyPipe(this, pipeLink, nextPipeable, eazyPipeId+1);
     }
     
-    private void runThread(final int threadId)
+    private Thread runThread(final int threadId)
     {
         Thread thread = new Thread()
         {
@@ -95,13 +81,10 @@ public class EazyPipe {
             {
                 try
                 {
-                    //System.out.println("Calling " + pipe.method + " from class " +pipe.object.getClass().toString());
-                    //System.out.println("pipe.object = " + pipe.object.toString() + ";  threadId = " +threadId + "; threadPipe.get(threadId) = "+ threadPipe.get(threadId).toString());
                     pipe.object.getClass().getDeclaredMethod(pipe.method, ThreadPipe.class).invoke(pipe.object, threadPipe.get(threadId));
-                    isReady.put(threadId, true);
                     if(pipe.callbackObject != null && areAllReady())
                     {
-                        pipe.callbackObject.getClass().getDeclaredMethod(pipe.callbackMethod).invoke(pipe.object);
+                        pipe.callbackObject.getClass().getDeclaredMethod(pipe.callbackMethod).invoke(pipe.callbackObject);
                     }
                 }
                 catch (NoSuchMethodException ex)
@@ -128,12 +111,13 @@ public class EazyPipe {
             
             private boolean areAllReady()
             {
-                for(boolean ready : isReady.values())
-                    if(!ready) return false;
+                for(Thread threadToCheck : threads.values())
+                    if(!threadToCheck.isAlive()) return false;
                 return true;
             }
         };
         thread.start();
+        return thread;
     }
     
     public final ConcurrentLinkedQueue getOutput()
@@ -164,30 +148,31 @@ public class EazyPipe {
         return pipe.optimizable && (getInputSize() > threadIdCounter);
     }
     
-    protected void removeThread() throws InterruptedException
+    protected int stopThread() throws InterruptedException
     {
         int actualThreadId = threadIdCounter -1;
         threadPipe.get(actualThreadId).stopThread();
-        while(!isReady.get(actualThreadId))
-        {
-            pause(100);
-        }
-        threadPipe.remove(actualThreadId);
-        isReady.remove(actualThreadId);
-        threadIdCounter--;
-        System.out.println("Stopped thread "+actualThreadId+" of " +pipe.method + " method from class " +pipe.object.getClass().toString());
+        System.out.println("Sended stop signal to thread "+actualThreadId+" of " +pipe.method + " method from class " +pipe.object.getClass().toString());
+        return actualThreadId;
     }
     
-    protected void pause(int time) throws InterruptedException
+    protected boolean isStopped(int threadId)
     {
-        Thread.sleep(time);
+        return !threads.get(threadId).isAlive();
+    }
+    
+    protected void completeThreadRemove(int threadId)
+    {
+        threadPipe.remove(threadId);
+        threads.remove(threadId);
+        threadIdCounter--;
+        System.out.println("Stopped thread "+threadId+" of " +pipe.method + " method from class " +pipe.object.getClass().toString());
     }
     
     protected void addThread()
-    {
-        isReady.put(threadIdCounter, false);
-        threadPipe.put(threadIdCounter, new ThreadPipe(pipe, this.pipeLink, threadIdCounter));
-        runThread(threadIdCounter);
+    {        
+        threadPipe.put(threadIdCounter, new ThreadPipe(pipe, this.pipeLink));
+        threads.put(threadIdCounter, runThread(threadIdCounter));
         threadIdCounter++;
         System.out.println("Added thread "+threadIdCounter+" of " +pipe.method + " method from class " +pipe.object.getClass().toString());
     }
@@ -200,6 +185,5 @@ public class EazyPipe {
     protected String whatAmIRunning()
     {
         return pipe.method + " method from class " +pipe.object.getClass().getSimpleName() + " with " + threadIdCounter + " thread(s)";
-    }
-    
+    }   
 }

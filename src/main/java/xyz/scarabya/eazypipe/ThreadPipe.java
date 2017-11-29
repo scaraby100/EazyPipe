@@ -22,13 +22,11 @@ package xyz.scarabya.eazypipe;
 public class ThreadPipe {
     protected final PipeLink pipeLink;
     private final Object args;
-    private final long pipeId;
     private boolean stop = false;
     
-    protected ThreadPipe(Pipeable originalPipe, PipeLink pipeLink, long pipeId) {
+    protected ThreadPipe(Pipeable originalPipe, PipeLink pipeLink) {
         this.pipeLink = pipeLink;
         this.args = originalPipe.args;
-        this.pipeId = pipeId;
     }
     
     protected void stopThread()

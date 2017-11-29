@@ -64,7 +64,12 @@ public class ThreadPipeManager
                         {
                             if(scoreBoard[j].isOptimizable())
                             {
-                                scoreBoard[i].removeThread();
+                                int stoppingId = scoreBoard[i].stopThread();
+                                while (!scoreBoard[i].isStopped(stoppingId))
+                                {
+                                    sleep(100);
+                                }
+                                scoreBoard[i].completeThreadRemove(stoppingId);
                                 scoreBoard[j].addThread();
                                 optimized = true;
                             }
@@ -73,7 +78,7 @@ public class ThreadPipeManager
                     }
                     i++;
                 }
-                Thread.sleep(100);
+                sleep(100);
                 return optimized;
             }
             
