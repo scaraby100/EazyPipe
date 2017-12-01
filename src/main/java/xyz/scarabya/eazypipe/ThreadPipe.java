@@ -36,22 +36,22 @@ public class ThreadPipe
         this.stop = true;
     }
 
-    protected void output(Object objectToAdd)
+    public void output(Object objectToAdd)
     {
         pipeLink.output(objectToAdd);
     }
 
-    protected Object input()
+    public Object input()
     {
         return pipeLink.input();
     }
 
-    protected Object args()
+    public Object args()
     {
         return args;
     }
 
-    protected boolean run()
+    public boolean run()
     {
         return !stop;
     }

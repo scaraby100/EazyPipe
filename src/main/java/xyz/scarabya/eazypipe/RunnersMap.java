@@ -32,7 +32,7 @@ public class RunnersMap
         this.pipeRunners = new ConcurrentHashMap();
     }
 
-    protected PipeRunner getPipeRunner(int runnerId)
+    public PipeRunner getPipeRunner(int runnerId)
     {
         return pipeRunners.get(runnerId);
     }
@@ -59,12 +59,12 @@ public class RunnersMap
 
     protected void stopRunner(int runnerId)
     {
-        pipeRunners.get(runnerId).stopThread();
+        pipeRunners.get(runnerId).getThreadPipe().stopThread();
     }
 
     protected boolean isRunnerRunning(int runnerId)
     {
-        return pipeRunners.get(runnerId).isThreadRunning();
+        return pipeRunners.get(runnerId).getThread().isAlive();
     }
 
     protected void removeRunner(int runnerId)

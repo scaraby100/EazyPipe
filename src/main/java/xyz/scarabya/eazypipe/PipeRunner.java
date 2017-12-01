@@ -30,23 +30,13 @@ public class PipeRunner
         this.threadPipe = threadPipe;
     }
 
-    protected ThreadPipe getThreadPipe()
+    public ThreadPipe getThreadPipe()
     {
         return threadPipe;
     }
 
-    protected Thread getThread()
+    public Thread getThread()
     {
         return thread;
-    }
-
-    protected void stopThread()
-    {
-        threadPipe.stopThread();
-    }
-
-    protected boolean isThreadRunning()
-    {
-        return thread.isAlive();
     }
 }
