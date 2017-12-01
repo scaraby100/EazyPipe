@@ -7,7 +7,7 @@ package xyz.scarabya.eazypipe;
 
 /**
  *
- * @author a.patriarca
+ * @author Alessandro Patriarca
  */
 public class EazyPipeStart
 {
