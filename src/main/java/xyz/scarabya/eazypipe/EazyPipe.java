@@ -16,10 +16,12 @@
 package xyz.scarabya.eazypipe;
 
 import java.lang.reflect.InvocationTargetException;
-import java.util.StringTokenizer;
+import java.util.LinkedList;
 import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.logging.Level;
 import java.util.logging.Logger;
+import xyz.scarabya.eazypipe.utils.EazyUtils;
+import xyz.scarabya.eazypipe.utils.Point;
 
 /**
  *
@@ -33,6 +35,8 @@ public class EazyPipe {
     private final EazyPipe prevEazyPipe;
     private final long eazyPipeId;
     private int threadIdCounter;
+    private int optimizeScore;
+    private int optimizeOperations;
     
     private EazyPipe(EazyPipe prevEazyPipe, PipeLink pipeLink, Pipeable newPipe, long eazyPipeId)
     {
@@ -139,7 +143,8 @@ public class EazyPipe {
     
     protected boolean isOptimizable()
     {
-        return pipe.optimizable && (getInputSize() > threadIdCounter);
+        return pipe.optimizable && (getInputSize() > threadIdCounter)
+                && (optimizeOperations<2 || optimizeScore>2);
     }
     
     protected int stopThread() throws InterruptedException
@@ -164,9 +169,16 @@ public class EazyPipe {
     
     protected void addThread()
     {        
+        long initialQueueSize = getInputSize();
         runnersMap.addRunner(threadIdCounter, runThread());
         threadIdCounter++;
         System.out.println("Added thread "+threadIdCounter+" of " +pipe.method + " method from class " +pipe.object.getClass().toString());
+        checkForProgess(initialQueueSize);
+    }
+    
+    protected void setOptimizeScore(int score)
+    {
+        optimizeScore = score;
     }
     
     protected String whoAmI()
@@ -177,5 +189,22 @@ public class EazyPipe {
     protected String whatAmIRunning()
     {
         return pipe.method + " method from class " +pipe.object.getClass().getSimpleName() + " with " + threadIdCounter + " thread(s)";
-    }   
+    }
+    
+    protected void checkForProgess(long initialQueueSize)
+    {
+        final long startMeasure = System.currentTimeMillis();
+        long currentTime = System.currentTimeMillis();
+        final LinkedList<Point> points = new LinkedList();
+        while(currentTime - startMeasure < 1000)
+        {
+            points.add(new Point(currentTime, getInputSize()));
+            currentTime = System.currentTimeMillis();
+        }        
+        final double score = EazyUtils.pointsTrend(
+                points.toArray(new Point[points.size()]), initialQueueSize);
+        optimizeOperations++;
+        optimizeScore = score > 0 ? 1 : -1;
+    }
+    
 }

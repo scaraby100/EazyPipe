@@ -15,8 +15,11 @@
  */
 package xyz.scarabya.eazypipe;
 
+import java.util.LinkedList;
 import java.util.logging.Level;
 import java.util.logging.Logger;
+import xyz.scarabya.eazypipe.utils.EazyUtils;
+import xyz.scarabya.eazypipe.utils.Point;
 
 /**
  *
@@ -89,7 +92,6 @@ public class ThreadPipeManager
                     }
                     i++;
                 }
-                sleep(100);
                 return optimized;
             }
 
@@ -116,6 +118,21 @@ public class ThreadPipeManager
             }
         };
         thread.start();
+    }
+    
+    private static int checkForProgess(EazyPipe buffed, long initialQueueSize)
+    {
+        final long startMeasure = System.currentTimeMillis();
+        long currentTime = System.currentTimeMillis();
+        final LinkedList<Point> points = new LinkedList();
+        while(currentTime - startMeasure < 1000)
+        {
+            points.add(new Point(currentTime, buffed.getInputSize()));
+            currentTime = System.currentTimeMillis();
+        }        
+        final double score = EazyUtils.pointsTrend(
+                points.toArray(new Point[points.size()]), initialQueueSize);
+        return score > 0 ? 1 : -1;
     }
     
     public void stopAutoManager()
