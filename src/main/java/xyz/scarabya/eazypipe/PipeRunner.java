@@ -29,14 +29,14 @@ public class PipeRunner
         this.thread = thread;
         this.threadPipe = threadPipe;
     }
-
-    public ThreadPipe getThreadPipe()
+    
+    protected boolean isRunning()
     {
-        return threadPipe;
+        return thread.isAlive();
     }
-
-    public Thread getThread()
+    
+    protected void stopRunner()
     {
-        return thread;
+        threadPipe.stopThread();
     }
 }

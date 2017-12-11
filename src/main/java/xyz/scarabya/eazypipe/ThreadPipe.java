@@ -33,7 +33,7 @@ public class ThreadPipe
 
     protected void stopThread()
     {
-        this.stop = true;
+        stop = true;
     }
 
     public void output(Object objectToAdd)

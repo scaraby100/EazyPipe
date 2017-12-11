@@ -24,14 +24,17 @@ import java.util.logging.Logger;
  */
 public class ThreadPipeManager
 {
+    private static boolean runAutoManager;
+    
     public static final void startAutoManager(final EazyPipe eazyPipe)
     {
+        runAutoManager = true;
         Thread thread = new Thread()
         {
             @Override
             public void run()
             {
-                while (true)
+                while (runAutoManager)
                 {
                     EazyPipe[] scoreBoard = new EazyPipe[1];
                     int i = 0;
@@ -113,5 +116,10 @@ public class ThreadPipeManager
             }
         };
         thread.start();
+    }
+    
+    public void stopAutoManager()
+    {
+        runAutoManager = false;
     }
 }

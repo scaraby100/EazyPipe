@@ -33,7 +33,6 @@ public class EazyPipe {
     private final EazyPipe prevEazyPipe;
     private final long eazyPipeId;
     private int threadIdCounter;
-    public StringTokenizer drunda;
     
     private EazyPipe(EazyPipe prevEazyPipe, PipeLink pipeLink, Pipeable newPipe, long eazyPipeId)
     {
@@ -107,7 +106,7 @@ public class EazyPipe {
             private boolean areAllReady()
             {
                 for(PipeRunner runnerToCheck : runnersMap.getPipeRunners())
-                    if(!runnerToCheck.getThread().isAlive()) return false;
+                    if(!runnerToCheck.isRunning()) return false;
                 return true;
             }
         };

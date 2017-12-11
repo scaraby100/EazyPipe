@@ -27,24 +27,14 @@ public class RunnersMap
 {
     private final Map<Integer, PipeRunner> pipeRunners;
 
-    public RunnersMap()
+    protected RunnersMap()
     {
         this.pipeRunners = new ConcurrentHashMap();
     }
 
-    public PipeRunner getPipeRunner(int runnerId)
+    protected PipeRunner getPipeRunner(int runnerId)
     {
         return pipeRunners.get(runnerId);
-    }
-
-    protected Thread getThread(int runnerId)
-    {
-        return pipeRunners.get(runnerId).getThread();
-    }
-
-    protected ThreadPipe getThreadPipe(int runnerId)
-    {
-        return pipeRunners.get(runnerId).getThreadPipe();
     }
 
     protected void addRunner(int runnerId, PipeRunner runner)
@@ -59,12 +49,12 @@ public class RunnersMap
 
     protected void stopRunner(int runnerId)
     {
-        pipeRunners.get(runnerId).getThreadPipe().stopThread();
+        pipeRunners.get(runnerId).stopRunner();
     }
 
     protected boolean isRunnerRunning(int runnerId)
     {
-        return pipeRunners.get(runnerId).getThread().isAlive();
+        return pipeRunners.get(runnerId).isRunning();
     }
 
     protected void removeRunner(int runnerId)
