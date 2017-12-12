@@ -192,13 +192,13 @@ public class EazyPipe
 
     protected void checkForProgress(long initialQueueSize)
     {
-        final long startMeasure = System.currentTimeMillis();
+        final long startMeasure = System.nanoTime();
         long currentTime = startMeasure;
         final LinkedList<Point> points = new LinkedList();
         while (currentTime - startMeasure < 1000)
         {
             points.add(new Point(currentTime, getInputSize()));
-            currentTime = System.currentTimeMillis();
+            currentTime = System.nanoTime();
         }
         final double score = pointsTrend(
                 points.toArray(new Point[points.size()]), initialQueueSize);
