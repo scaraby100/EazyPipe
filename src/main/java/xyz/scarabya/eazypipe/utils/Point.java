@@ -22,9 +22,9 @@ package xyz.scarabya.eazypipe.utils;
 public class Point
 {
     public final long t;
-    public final double value;
+    public final long value;
 
-    public Point(long t, double value)
+    public Point(long t, long value)
     {
         this.t = t;
         this.value = value;
