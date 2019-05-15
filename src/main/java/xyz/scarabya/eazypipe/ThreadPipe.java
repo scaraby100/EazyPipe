@@ -42,7 +42,7 @@ public class ThreadPipe {
     }
 
     public boolean run() {
-        return pipeLink.isOpenIn();
+        return pipeLink.isOpenIn() || !pipeLink.inputIsEmpty();
     }
 
     public Object args() {

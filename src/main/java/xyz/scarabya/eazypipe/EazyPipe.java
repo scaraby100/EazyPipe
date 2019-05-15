@@ -75,18 +75,18 @@ public class EazyPipe {
                     Logger.getLogger(EazyPipe.class.getName()).log(Level.SEVERE, null, ex);
                 }
             }
-
-            private boolean areAllReady() {
-                for (Thread runnerToCheck : pipeRunners.values()) {
-                    if (!runnerToCheck.isAlive()) {
-                        return false;
-                    }
-                }
-                return true;
-            }
         };
         thread.start();
         return thread;
+    }
+
+    public boolean areAllReady() {
+        for (Thread runnerToCheck : pipeRunners.values()) {
+            if (runnerToCheck.isAlive()) {
+                return false;
+            }
+        }
+        return true;
     }
 
     public final ConcurrentLinkedQueue getOutput() {

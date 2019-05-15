@@ -46,6 +46,10 @@ public class PipeLink {
         return prevPipeLink.openOut;
     }
 
+    protected boolean inputIsEmpty() {
+        return channelIn.isEmpty();
+    }
+
     protected void closeOut() {
         openOut = false;
     }
