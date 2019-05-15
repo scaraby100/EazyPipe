@@ -19,194 +19,53 @@ package xyz.scarabya.eazypipe;
  *
  * @author Alessandro Patriarca
  */
-public class Pipeable
-{
+public class Pipeable {
+
     protected final Object object;
     protected final String method;
     protected final Object args;
     protected final int nThread;
     protected final Object callbackObject;
     protected final String callbackMethod;
-    protected final boolean optimizable;
 
-    public Pipeable(Object object, String method)
-    {
-        this.object = object;
-        this.method = method;
-        this.args = null;
-        this.nThread = 1;
-        this.callbackObject = null;
-        this.callbackMethod = null;
-        this.optimizable = false;
+    public Pipeable(Object object, String method) {
+        this(object, method, 1, null, null, null);
     }
 
-    public Pipeable(Object object, String method, Object args)
-    {
-        this.object = object;
-        this.method = method;
-        this.args = args;
-        this.nThread = 1;
-        this.callbackObject = null;
-        this.callbackMethod = null;
-        this.optimizable = false;
+    public Pipeable(Object object, String method, Object args) {
+        this(object, method, 1, args, null, null);
     }
 
-    public Pipeable(Object object, String method, int thread)
-    {
-        this.object = object;
-        this.method = method;
-        this.args = null;
-        this.nThread = thread;
-        this.callbackObject = null;
-        this.callbackMethod = null;
-        this.optimizable = false;
+    public Pipeable(Object object, String method, int thread) {
+        this(object, method, thread, null, null, null);
     }
 
-    public Pipeable(Object object, String method, int thread, Object args)
-    {
-        this.object = object;
-        this.method = method;
-        this.args = args;
-        this.nThread = thread;
-        this.callbackObject = null;
-        this.callbackMethod = null;
-        this.optimizable = false;
+    public Pipeable(Object object, String method, int thread, Object args) {
+        this(object, method, thread, args, null, null);
     }
 
-    public Pipeable(Object object, String method, Object callbackObject, String callbackMethod)
-    {
-        this.object = object;
-        this.method = method;
-        this.args = null;
-        this.nThread = 1;
-        this.callbackObject = callbackObject;
-        this.callbackMethod = callbackMethod;
-        this.optimizable = false;
+    public Pipeable(Object object, String method, Object callbackObject, String callbackMethod) {
+        this(object, method, 1, null, callbackObject, callbackMethod);
     }
 
-    public Pipeable(Object object, String method, Object args, Object callbackObject, String callbackMethod)
-    {
-        this.object = object;
-        this.method = method;
-        this.args = args;
-        this.nThread = 1;
-        this.callbackObject = callbackObject;
-        this.callbackMethod = callbackMethod;
-        this.optimizable = false;
+    public Pipeable(Object object, String method, Object args, Object callbackObject, String callbackMethod) {
+        this(object, method, 1, args, callbackObject, callbackMethod);
     }
 
-    public Pipeable(Object object, String method, int thread, Object callbackObject, String callbackMethod)
-    {
-        this.object = object;
-        this.method = method;
-        this.args = null;
-        this.nThread = thread;
-        this.callbackObject = callbackObject;
-        this.callbackMethod = callbackMethod;
-        this.optimizable = false;
+    public Pipeable(Object object, String method, int thread, Object callbackObject, String callbackMethod) {
+        this(object, method, thread, null, callbackObject, callbackMethod);
     }
 
-    public Pipeable(Object object, String method, int thread, Object args, Object callbackObject, String callbackMethod)
-    {
+    public Pipeable(Object object, String method, int thread, Object args, Object callbackObject, String callbackMethod) {
         this.object = object;
         this.method = method;
         this.args = args;
         this.nThread = thread;
         this.callbackObject = callbackObject;
         this.callbackMethod = callbackMethod;
-        this.optimizable = false;
     }
 
-    public Pipeable(Object object, String method, boolean optimizable)
-    {
-        this.object = object;
-        this.method = method;
-        this.args = null;
-        this.nThread = 1;
-        this.callbackObject = null;
-        this.callbackMethod = null;
-        this.optimizable = optimizable;
-    }
-
-    public Pipeable(Object object, String method, Object args, boolean optimizable)
-    {
-        this.object = object;
-        this.method = method;
-        this.args = args;
-        this.nThread = 1;
-        this.callbackObject = null;
-        this.callbackMethod = null;
-        this.optimizable = optimizable;
-    }
-
-    public Pipeable(Object object, String method, int thread, boolean optimizable)
-    {
-        this.object = object;
-        this.method = method;
-        this.args = null;
-        this.nThread = thread;
-        this.callbackObject = null;
-        this.callbackMethod = null;
-        this.optimizable = optimizable;
-    }
-
-    public Pipeable(Object object, String method, int thread, Object args, boolean optimizable)
-    {
-        this.object = object;
-        this.method = method;
-        this.args = args;
-        this.nThread = thread;
-        this.callbackObject = null;
-        this.callbackMethod = null;
-        this.optimizable = optimizable;
-    }
-
-    public Pipeable(Object object, String method, Object callbackObject, String callbackMethod, boolean optimizable)
-    {
-        this.object = object;
-        this.method = method;
-        this.args = null;
-        this.nThread = 1;
-        this.callbackObject = callbackObject;
-        this.callbackMethod = callbackMethod;
-        this.optimizable = optimizable;
-    }
-
-    public Pipeable(Object object, String method, Object args, Object callbackObject, String callbackMethod, boolean optimizable)
-    {
-        this.object = object;
-        this.method = method;
-        this.args = args;
-        this.nThread = 1;
-        this.callbackObject = callbackObject;
-        this.callbackMethod = callbackMethod;
-        this.optimizable = optimizable;
-    }
-
-    public Pipeable(Object object, String method, int thread, Object callbackObject, String callbackMethod, boolean optimizable)
-    {
-        this.object = object;
-        this.method = method;
-        this.args = null;
-        this.nThread = thread;
-        this.callbackObject = callbackObject;
-        this.callbackMethod = callbackMethod;
-        this.optimizable = optimizable;
-    }
-
-    public Pipeable(Object object, String method, int thread, Object args, Object callbackObject, String callbackMethod, boolean optimizable)
-    {
-        this.object = object;
-        this.method = method;
-        this.args = args;
-        this.nThread = thread;
-        this.callbackObject = callbackObject;
-        this.callbackMethod = callbackMethod;
-        this.optimizable = optimizable;
-    }
-
-    public Object args()
-    {
+    public Object args() {
         return args;
     }
 }

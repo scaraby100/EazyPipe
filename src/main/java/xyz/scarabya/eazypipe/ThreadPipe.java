@@ -19,41 +19,33 @@ package xyz.scarabya.eazypipe;
  *
  * @author Alessandro Patriarca
  */
-public class ThreadPipe
-{
+public class ThreadPipe {
+
     private final PipeLink pipeLink;
     private final Object args;
-    private boolean stop = false;
 
-    protected ThreadPipe(Pipeable originalPipe, PipeLink pipeLink)
-    {
+    protected ThreadPipe(Pipeable originalPipe, PipeLink pipeLink) {
         this.pipeLink = pipeLink;
         this.args = originalPipe.args;
     }
 
-    protected void stopThread()
-    {
-        stop = true;
-    }
-
-    public void output(Object objectToAdd)
-    {
+    public void output(Object objectToAdd) {
         pipeLink.output(objectToAdd);
     }
 
-    public Object input()
-    {
+    public Object input() {
         return pipeLink.input();
     }
 
-    public Object args()
-    {
+    public void done() {
+        pipeLink.closeOut();
+    }
+
+    public boolean run() {
+        return pipeLink.isOpenIn();
+    }
+
+    public Object args() {
         return args;
     }
-
-    public boolean run()
-    {
-        return !stop;
-    }
-
 }

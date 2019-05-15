@@ -16,208 +16,92 @@
 package xyz.scarabya.eazypipe;
 
 import java.lang.reflect.InvocationTargetException;
-import java.util.LinkedList;
+import java.util.Map;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.logging.Level;
 import java.util.logging.Logger;
-import xyz.scarabya.eazypipe.utils.Point;
 
 /**
  *
  * @author Alessandro Patriarca
  */
-public class EazyPipe
-{
+public class EazyPipe {
 
-    private final Pipeable pipe;
-    private final RunnersMap runnersMap;
+    private final Pipeable pipeable;
+    private final Map<Integer, Thread> pipeRunners;
     private final PipeLink pipeLink;
     private final EazyPipe prevEazyPipe;
     private final long eazyPipeId;
-    private int threadIdCounter;
-    private int optimizeScore;
-    private int optimizeOperations;
 
-    private EazyPipe(EazyPipe prevEazyPipe, PipeLink pipeLink, Pipeable newPipe, long eazyPipeId)
-    {
-        pipe = newPipe;
+    private EazyPipe(EazyPipe prevEazyPipe, PipeLink pipeLink, Pipeable pipeable, long eazyPipeId) {
+        this.pipeable = pipeable;
         this.prevEazyPipe = prevEazyPipe;
-        runnersMap = new RunnersMap();
         this.pipeLink = new PipeLink(pipeLink);
-        threadIdCounter = pipe.nThread;
         this.eazyPipeId = eazyPipeId;
-        for (int i = 0; i < pipe.nThread; i++)
-            runnersMap.addRunner(i, runThread());
+        pipeRunners = new ConcurrentHashMap();
+        for (int i = 0; i < pipeable.nThread; i++) {
+            pipeRunners.put(i, runThread());
+        }
     }
 
-    protected EazyPipe(Pipeable newPipe)
-    {
+    protected EazyPipe(Pipeable newPipe) {
         this(null, null, newPipe, 0);
     }
 
-    private EazyPipe()
-    {
-        pipeLink = null;
-        pipe = null;
-        prevEazyPipe = null;
-        runnersMap = null;
-        eazyPipeId = 0;
-    }
-
-    public final EazyPipe runPipe(Pipeable nextPipeable)
-    {
+    public final EazyPipe runPipe(Pipeable nextPipeable) {
         return new EazyPipe(this, pipeLink, nextPipeable, eazyPipeId + 1);
     }
 
-    private PipeRunner runThread()
-    {
-        final ThreadPipe threadPipe = new ThreadPipe(pipe, this.pipeLink);
-        Thread thread = new Thread()
-        {
+    private Thread runThread() {
+        final ThreadPipe threadPipe = new ThreadPipe(pipeable, this.pipeLink);
+        final Thread thread = new Thread() {
             @Override
-            public void run()
-            {
-                try
-                {
-                    pipe.object.getClass().getDeclaredMethod(pipe.method, ThreadPipe.class).invoke(pipe.object, threadPipe);
-                    if (pipe.callbackObject != null && areAllReady())
-                        pipe.callbackObject.getClass().getDeclaredMethod(pipe.callbackMethod).invoke(pipe.callbackObject);
-                }
-                catch (NoSuchMethodException ex)
-                {
+            public void run() {
+                try {
+                    pipeable.object.getClass().getDeclaredMethod(pipeable.method, ThreadPipe.class).invoke(pipeable.object, threadPipe);
+                    if (pipeable.callbackObject != null && areAllReady()) {
+                        pipeable.callbackObject.getClass().getDeclaredMethod(pipeable.callbackMethod).invoke(pipeable.callbackObject);
+                    }
+                } catch (NoSuchMethodException ex) {
                     Logger.getLogger(EazyPipe.class.getName()).log(Level.SEVERE, null, ex);
-                }
-                catch (SecurityException ex)
-                {
+                } catch (SecurityException ex) {
                     Logger.getLogger(EazyPipe.class.getName()).log(Level.SEVERE, null, ex);
-                }
-                catch (IllegalAccessException ex)
-                {
+                } catch (IllegalAccessException ex) {
                     Logger.getLogger(EazyPipe.class.getName()).log(Level.SEVERE, null, ex);
-                }
-                catch (IllegalArgumentException ex)
-                {
+                } catch (IllegalArgumentException ex) {
                     Logger.getLogger(EazyPipe.class.getName()).log(Level.SEVERE, null, ex);
-                }
-                catch (InvocationTargetException ex)
-                {
+                } catch (InvocationTargetException ex) {
                     Logger.getLogger(EazyPipe.class.getName()).log(Level.SEVERE, null, ex);
                 }
             }
 
-            private boolean areAllReady()
-            {
-                for (PipeRunner runnerToCheck : runnersMap.getPipeRunners())
-                    if (!runnerToCheck.isRunning())
+            private boolean areAllReady() {
+                for (Thread runnerToCheck : pipeRunners.values()) {
+                    if (!runnerToCheck.isAlive()) {
                         return false;
+                    }
+                }
                 return true;
             }
         };
         thread.start();
-        return new PipeRunner(thread, threadPipe);
+        return thread;
     }
 
-    public final ConcurrentLinkedQueue getOutput()
-    {
+    public final ConcurrentLinkedQueue getOutput() {
         return pipeLink.getOutputChannel();
     }
 
-    protected long getInputSize()
-    {
-        if (pipeLink.hasInputChannel())
-            return pipeLink.getInputChannelSize();
-        else
-            return 1;
-    }
-
-    protected EazyPipe getPrevEazyPipe()
-    {
+    protected EazyPipe getPrevEazyPipe() {
         return prevEazyPipe;
     }
 
-    protected boolean isStoppable()
-    {
-        return pipe.optimizable && threadIdCounter > 1;
-    }
-
-    protected boolean isOptimizable()
-    {
-        return pipe.optimizable && (getInputSize() > threadIdCounter)
-                && (optimizeOperations < 2 || optimizeScore > 2);
-    }
-
-    protected int stopThread() throws InterruptedException
-    {
-        int actualThreadId = threadIdCounter - 1;
-        runnersMap.stopRunner(actualThreadId);
-        System.out.println("Sended stop signal to thread " + actualThreadId + " of " + pipe.method + " method from class " + pipe.object.getClass().toString());
-        return actualThreadId;
-    }
-
-    protected boolean isStopped(int threadId)
-    {
-        return runnersMap.isRunnerRunning(threadId);
-    }
-
-    protected void completeThreadRemove(int threadId)
-    {
-        runnersMap.removeRunner(threadId);
-        threadIdCounter--;
-        System.out.println("Stopped thread " + threadId + " of " + pipe.method + " method from class " + pipe.object.getClass().toString());
-    }
-
-    protected void addThread()
-    {
-        long initialQueueSize = getInputSize();
-        runnersMap.addRunner(threadIdCounter, runThread());
-        threadIdCounter++;
-        System.out.println("Added thread " + threadIdCounter + " of " + pipe.method + " method from class " + pipe.object.getClass().toString());
-        checkForProgress(initialQueueSize);
-    }
-
-    protected void setOptimizeScore(int score)
-    {
-        optimizeScore = score;
-    }
-
-    protected String whoAmI()
-    {
+    protected String whoAmI() {
         return "EazyPipe ID: " + eazyPipeId;
     }
 
-    protected String whatAmIRunning()
-    {
-        return pipe.method + " method from class " + pipe.object.getClass().getSimpleName() + " with " + threadIdCounter + " thread(s)";
+    protected String whatAmIRunning() {
+        return pipeable.method + " method from class " + pipeable.object.getClass().getSimpleName();
     }
-
-    protected void checkForProgress(long initialQueueSize)
-    {
-        final long startMeasure = System.nanoTime();
-        long currentTime = startMeasure;
-        final LinkedList<Point> points = new LinkedList();
-        while (currentTime - startMeasure < 1000)
-        {
-            points.add(new Point(currentTime, getInputSize()));
-            currentTime = System.nanoTime();
-        }
-        final double score = pointsTrend(
-                points.toArray(new Point[points.size()]), initialQueueSize);
-        optimizeOperations++;
-        optimizeScore += score > 0 ? 1 : -1;
-    }
-
-    public double pointsTrend(final Point[] points, long initialValue)
-    {
-        double area = 0;
-        long diffT;
-        long sumVal;
-        for (int i = 1; i < points.length; i++)
-        {
-            diffT = points[i].t - points[i - 1].t;
-            sumVal = points[i].value + points[i - 1].value - (2 * initialValue);
-            area += sumVal * diffT / 2;
-        }
-        return area;
-    }
-
 }

@@ -21,56 +21,36 @@ import java.util.concurrent.ConcurrentLinkedQueue;
  *
  * @author Alessandro Patriarca
  */
-public class PipeLink
-{
+public class PipeLink {
+
     private final ConcurrentLinkedQueue channelIn;
     private final ConcurrentLinkedQueue channelOut;
+    private final PipeLink prevPipeLink;
+    private boolean openOut = true;
 
-    protected PipeLink(PipeLink prevPipeLink)
-    {
+    protected PipeLink(PipeLink prevPipeLink) {
+        this.prevPipeLink = prevPipeLink;
         this.channelIn = prevPipeLink == null ? null : prevPipeLink.channelOut;
         this.channelOut = new ConcurrentLinkedQueue();
     }
 
-    private PipeLink()
-    {
-        this.channelIn = null;
-        this.channelOut = null;
-    }
-
-    protected void output(Object objectToAdd)
-    {
+    protected void output(Object objectToAdd) {
         channelOut.add(objectToAdd);
     }
 
-    protected Object input()
-    {
+    protected Object input() {
         return channelIn.poll();
     }
 
-    protected ConcurrentLinkedQueue getOutputChannel()
-    {
+    protected boolean isOpenIn() {
+        return prevPipeLink.openOut;
+    }
+
+    protected void closeOut() {
+        openOut = false;
+    }
+
+    protected ConcurrentLinkedQueue getOutputChannel() {
         return channelOut;
     }
-
-    protected Object pollOutput()
-    {
-        return channelOut.poll();
-    }
-
-    protected long getOutputChannelSize()
-    {
-        return channelOut.size();
-    }
-
-    protected long getInputChannelSize()
-    {
-        return channelIn.size();
-    }
-
-    protected boolean hasInputChannel()
-    {
-        return channelIn != null;
-    }
-
 }

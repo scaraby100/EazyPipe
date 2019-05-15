@@ -19,10 +19,9 @@ package xyz.scarabya.eazypipe;
  *
  * @author Alessandro Patriarca
  */
-public class EazyPipeStart
-{
-    public static final EazyPipe runPipe(Pipeable nextPipeable)
-    {
+public class EazyPipeStart {
+
+    public static final EazyPipe runPipe(Pipeable nextPipeable) {
         return new EazyPipe(nextPipeable);
     }
 }
