@@ -1,24 +1,24 @@
 # EazyPipe 2.0
 
-**Concurrent, type-safe, backpressured data pipelines for Java 21+.**
+**Concurrent, type-safe, backpressured, and adaptive data pipelines for Java 21+.**
 
-EazyPipe lets you chain producer, transformation, and consumer stages in a clean fluent API while automatically managing **Java 21 Virtual Threads**, **bounded inter-stage backpressure**, **error propagation**, and **graceful lifecycle shutdown**.
+EazyPipe lets you compose producer, transformation, fan-out, and consumer stages in an immutable fluent API while managing **Java 21 Virtual Threads**, **hybrid CPU/IO scheduling**, **bounded inter-stage backpressure**, **downstream-aware adaptive concurrency**, **retries & dead-letter handling**, and **graceful draining**.
 
 ---
 
 ## Features
 
-- **Type-safe fluent API** — Built around standard Java generics, lambdas, and method references (no reflection, zero runtime dependencies).
-- **Java 21 Virtual Threads by default** — Lightweight concurrency per stage out of the box, with optional daemon platform threads or caller-supplied `ExecutorService`.
-- **Real backpressure** — Stages communicate via lock-based bounded FIFO channels (`ReentrantLock` + `Condition`) with zero busy-waiting and no virtual-thread pinning.
-- **Per-stage parallelism & completion callbacks** — Configure worker count, buffer capacity, stage name, and an `onComplete` hook guaranteed to run once after every worker in the stage finishes.
-- **Structured error handling** — Choose between `FAIL_FAST` (immediately aborts upstream/downstream channels and interrupts active workers) or `CONTINUE_ON_ITEM_ERROR` with custom `errorHandler` and skipped-error metrics.
-- **Sync & async execution** — Run synchronously (`toList()`, `collect(...)`, `count()`, `run(...)`) or asynchronously via `PipeExecution<R>` (`AutoCloseable`, `CompletableFuture<R>`, `await(Duration)`, `cancel()`, `PipeStats`).
+- **Type-safe fluent API (`module xyz.scarabya.eazypipe`)** — Zero reflection, zero runtime dependencies, full JPMS module descriptor (`java.base` only).
+- **Hybrid per-stage scheduling** — Run `IO_BOUND` stages on **Java 21 Virtual Threads**, `CPU_BOUND` stages on daemon platform threads under a shared CPU budget, or bring your own `ExecutorService`.
+- **Real lock-based backpressure & overflow policies** — Bounded FIFO channels built on `ReentrantLock` + `Condition` (zero busy-waiting, zero virtual-thread pinning) supporting `BLOCK`, `DROP_OLDEST`, `DROP_NEWEST`, and `FAIL`.
+- **Downstream-aware adaptive concurrency (`AdaptiveController`)** — Automatically rebalances `CPU_BOUND` permits (`CpuBudgetAllocator`) and tunes `IO_BOUND` concurrency via AIMD/Vegas (`IoConcurrencyLimiter`) using EMA telemetry, deadband hysteresis, persistence, and per-stage cooldowns so fast upstream stages never scale up into a full downstream wall.
+- **Production operators & mini-DAG** — `map`, `mapConcurrentOrdered`, `filter`, `flatMap`, `batch(maxSize, maxWait)`, `rateLimit`, `tee`, `broadcast`, `route`, `EazyPipe.merge`, `peek`, and `ContextPropagator`.
+- **Structured resilience & observability** — Per-stage `ErrorPolicy` (`FAIL_FAST`, `SKIP`, `DEAD_LETTER`, `RETRY` with exponential backoff + jitter), typed `DeadLetterHandler<T>`, graceful `drain()` vs immediate `cancel()`, `PipeExecution<R>` (`AutoCloseable` + `CompletableFuture<R>`), and `PipelineMetricsListener` SPI.
 
 ## Requirements
 
 - **Java 21+**
-- No external runtime dependencies (only JUnit 5 in `test` scope).
+- Zero runtime dependencies (JUnit 5 in `test` scope only).
 
 ---
 
@@ -34,7 +34,7 @@ public class Example {
     public static void main(String[] args) {
         List<String> result = EazyPipe.of("alpha", "be", "gamma", "delta")
                 .filter(s -> s.length() > 2)
-                .map(StageConfig.parallel(4), String::toUpperCase)
+                .mapConcurrentOrdered(StageConfig.parallel(4), String::toUpperCase)
                 .flatMap(s -> List.of(s, s + "!"))
                 .toList();
 
@@ -43,83 +43,76 @@ public class Example {
 }
 ```
 
-### Custom Producer (`PipeSource`), Multi-Item `PipeProcessor`, and `PipeSink`
+### Adaptive Hybrid CPU/IO Pipeline with Retries, Batching & Dead-Letter Handling
 
 ```java
-EazyPipe.<Integer>from(StageConfig.named("numbers"), emitter -> {
-            for (int i = 1; i <= 1000; i++) {
-                emitter.emit(i);
-            }
-        })
-        .<String>stage(StageConfig.parallel(4), (n, emitter) -> {
-            if (n % 2 == 0) {
-                emitter.emit("even-" + n);
-            }
-        })
-        .run(StageConfig.builder()
-                .name("printer")
-                .bufferCapacity(64)
-                .onComplete(() -> System.out.println("Done!"))
-                .build(),
-                System.out::println);
-```
+try (PipeExecution<Void> exec = EazyPipe.fromStream(() -> Files.lines(Path.of("docs.txt")))
+        .map(StageConfig.cpuBound("parse-chunk")
+                        .concurrency(1, 8)
+                        .bufferCapacity(256)
+                        .build(),
+                line -> parseChunk(line))
+        .map(StageConfig.ioBound("embed")
+                        .concurrency(2, 64)
+                        .bufferCapacity(128)
+                        .retry(RetrySpec.exponential(3, Duration.ofMillis(100)))
+                        .deadLetter(String.class, (chunk, err, stage) ->
+                                System.err.printf("Skipped in %s (%s): %s%n", stage, chunk, err.getMessage()))
+                        .build(),
+                chunk -> embed(chunk))
+        .batch("batch-upsert", 100, Duration.ofMillis(250))
+        .configure(PipeConfig.builder()
+                .adaptive(AdaptiveConfig.builder()
+                        .tickInterval(Duration.ofMillis(250))
+                        .cpuBudget(Runtime.getRuntime().availableProcessors())
+                        .onDecision(decision -> System.out.println("Autoscaler: " + decision))
+                        .build())
+                .build())
+        .start(StageConfig.ioBound("vector-db")
+                        .concurrency(1, 8)
+                        .build(),
+                batch -> upsertBatch(batch))) {
 
-### Stream Sources (`fromStream`)
-
-Streams supplied via `EazyPipe.fromStream(...)` are lazily iterated and closed automatically via `try-with-resources`, even if a downstream stage fails or cancels:
-
-```java
-long lineCount = EazyPipe.fromStream(() -> Files.lines(Path.of("data.txt")))
-        .filter(line -> !line.isBlank())
-        .count();
-```
-
----
-
-## Configuration & Backpressure
-
-### Per-Stage Options (`StageConfig`)
-
-- `StageConfig.parallel(n)` — Run `n` concurrent workers for that stage.
-- `StageConfig.withBuffer(capacity)` — Set bounded channel capacity (`0` inherits `PipeConfig.defaultBufferCapacity()`). When a stage is slower than upstream, the bounded channel applies backpressure and blocks upstream `emit(...)` calls without unbounded memory growth.
-- `StageConfig.named("stage-name")` — Attach a human-readable stage name included in `PipeException.stageName()` and `errorHandler` callbacks.
-- `StageConfig.builder()...onComplete(runnable).build()` — Combine all options including a completion hook invoked once when all workers in that stage finish normally.
-
-### Global Options (`PipeConfig`)
-
-```java
-PipeConfig config = PipeConfig.builder()
-        .defaultBufferCapacity(512)
-        .executorMode(PipeConfig.ExecutorMode.VIRTUAL_THREADS) // or PLATFORM_THREADS / customExecutor(...)
-        .errorStrategy(PipeConfig.ErrorStrategy.CONTINUE_ON_ITEM_ERROR)
-        .errorHandler((stage, err) -> System.err.println(stage + ": " + err.getMessage()))
-        .build();
-
-List<Integer> parsed = EazyPipe.of("10", "invalid", "20")
-        .configure(config)
-        .map(StageConfig.named("parse"), Integer::parseInt)
-        .toList();
-```
-
-When using `PipeConfig.withExecutor(myPool)` (or `.customExecutor(myPool)`), EazyPipe submits worker tasks to your executor and **never** shuts it down when the pipeline ends.
-
----
-
-## Asynchronous Execution (`PipeExecution`)
-
-```java
-try (PipeExecution<List<String>> exec = EazyPipe.of("a", "b", "c")
-        .map(String::toUpperCase)
-        .startToList()) {
-
-    List<String> items = exec.await(Duration.ofSeconds(5));
-    PipeStats stats = exec.stats();
-    System.out.printf("Items: %s | Elapsed: %s | Consumed: %d%n",
-            items, stats.elapsed(), stats.itemsConsumed());
+    exec.await();
 }
 ```
 
-`PipeExecution<R>` also exposes `future()` (a defensive `CompletableFuture<R>` copy), `await()`, `join()`, `cancel()`, `isDone()`, `isFailed()`, and `isCancelled()`. Closing an unfinished `PipeExecution` cancels remaining work and waits for all workers to terminate cleanly.
+### Production Operators (`mapConcurrentOrdered`, `rateLimit`, `tee`, `broadcast`, `route`, `merge`)
+
+- `mapConcurrentOrdered(StageConfig, mapper)` — Processes items concurrently across workers while emitting downstream in strict FIFO input order.
+- `batch(maxSize, maxWait)` — Groups items into immutable `List` batches flushed on size or timeout.
+- `rateLimit(permitsPerSecond)` — Smoothly paces downstream throughput using an abort-aware lock-based limiter.
+- `tee(sideConfig, sideSink)` — Forks every passing item asynchronously to a side sink while keeping the main flow running.
+- `runBroadcast(...)` / `startBroadcast(...)` — Concurrent fan-out to multiple independent terminal sinks.
+- `runRoute(classifier, routes, defaultSink)` — Key-based routing across terminal sinks.
+- `EazyPipe.merge(sources...)` — Merges multiple concurrent `PipeSource` producers into a single stream.
+
+---
+
+## Lifecycle Control (`drain` vs `cancel`), Context & Metrics
+
+```java
+try (PipeExecution<List<Integer>> exec = EazyPipe.<Integer>from(emitter -> {
+            int i = 0;
+            while (!Thread.currentThread().isInterrupted()) {
+                emitter.emit(i++);
+            }
+        })
+        .map(n -> n * 2)
+        .startToList()) {
+
+    Thread.sleep(50);
+    // Stops the source cleanly and waits for all in-flight items to drain downstream:
+    List<Integer> drained = exec.drain();
+    PipelineMetricsSnapshot metrics = exec.metricsSnapshot();
+    System.out.printf("Consumed=%d Dropped=%d Elapsed=%s%n",
+            metrics.itemsConsumed(), metrics.itemsDropped(), metrics.elapsed());
+}
+```
+
+- Attach thread-local context (`MDC`, trace IDs, tenant IDs) across worker and item boundaries via `PipeConfig.builder().contextPropagator(...)`.
+- Observe live stage metrics, scaling decisions, errors, dead letters, and channel overflows via `PipeConfig.builder().metricsListener(...)`.
+- Use `PipeConfig.withExecutor(myPool)` (or `.customExecutor(myPool)`) when supplying your own `ExecutorService` — EazyPipe never shuts down caller-owned executors.
 
 ---
 
