@@ -1,8 +1,14 @@
-# EazyPipe 2.0
+<p align="center">
+  <img src="docs/eazypipe-logo.png" alt="EazyPipe Logo" width="220" />
+</p>
 
-**Concurrent, type-safe, backpressured, and adaptive data pipelines for Java 21+.**
+<h1 align="center">EazyPipe 2.0</h1>
 
-EazyPipe lets you compose producer, transformation, fan-out, and consumer stages in an immutable fluent API while managing **Java 21 Virtual Threads**, **hybrid CPU/IO scheduling**, **bounded inter-stage backpressure**, **downstream-aware adaptive concurrency**, **retries & dead-letter handling**, and **graceful draining**.
+<p align="center">
+  <strong>Zero-dependency, backpressured, and end-to-end auto-balancing concurrent pipelines for Java 21+ Virtual Threads.</strong>
+</p>
+
+EazyPipe lets you compose producer, transformation, fan-out, and consumer stages in an immutable fluent API while managing **Java 21 Virtual Threads**, **hybrid CPU/IO scheduling**, **bounded inter-stage backpressure**, **downstream-aware end-to-end auto-balancing**, **retries & dead-letter handling**, and **graceful draining**.
 
 ---
 
@@ -129,6 +135,12 @@ The repository includes the **Maven Wrapper** (`mvnw` / `mvnw.cmd`), so Maven do
 ```powershell
 .\mvnw.cmd clean verify
 ```
+
+---
+
+## Roadmap & Architecture
+
+EazyPipe 2.0 focuses on **end-to-end auto-balancing** across heterogeneous CPU/IO stages while preserving a slim, zero-dependency micro-library core. See [docs/EAZYPIPE_ADAPTIVE_PLAN.md](docs/EAZYPIPE_ADAPTIVE_PLAN.md) for the Gen-2 adaptive architecture (fan-out aware CPU budgeting, downstream propagation brake, Vegas/retry I/O control), micro-core refactoring plan, JMH proof-of-value benchmarks, and Maven Central `2.0.0` release roadmap.
 
 ---
 
