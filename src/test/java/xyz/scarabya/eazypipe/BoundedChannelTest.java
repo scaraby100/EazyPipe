@@ -188,4 +188,91 @@ class BoundedChannelTest {
         channel.close();
         assertThrows(IllegalStateException.class, () -> channel.send("late"));
     }
+
+    @Test
+    void overflowDropOldestEvictsHeadAndTracksDroppedCount() throws Exception {
+        BoundedChannel<Integer> channel = new BoundedChannel<>(2, OverflowPolicy.DROP_OLDEST);
+        assertTrue(channel.send(1));
+        assertTrue(channel.send(2));
+        assertTrue(channel.send(3)); // evicts 1
+        assertTrue(channel.send(4)); // evicts 2
+        channel.close();
+
+        assertEquals(2L, channel.droppedCount());
+        assertEquals(2, channel.size());
+        assertEquals(3, channel.receive());
+        assertEquals(4, channel.receive());
+        assertNull(channel.receive());
+    }
+
+    @Test
+    void overflowDropNewestDiscardsIncomingItemWithoutBlocking() throws Exception {
+        BoundedChannel<Integer> channel = new BoundedChannel<>(2, OverflowPolicy.DROP_NEWEST);
+        assertTrue(channel.send(1));
+        assertTrue(channel.send(2));
+        assertFalse(channel.send(3)); // dropped
+        assertFalse(channel.send(4)); // dropped
+        channel.close();
+
+        assertEquals(2L, channel.droppedCount());
+        assertEquals(1, channel.receive());
+        assertEquals(2, channel.receive());
+        assertNull(channel.receive());
+    }
+
+    @Test
+    void overflowFailThrowsChannelOverflowException() throws Exception {
+        BoundedChannel<String> channel = new BoundedChannel<>(1, OverflowPolicy.FAIL);
+        assertTrue(channel.send("ok"));
+        assertThrows(ChannelOverflowException.class, () -> channel.send("overflow"));
+        assertEquals(1L, channel.droppedCount());
+    }
+
+    @Test
+    void receiveBatchFlushesOnMaxSizeTimeoutAndEof() throws Exception {
+        BoundedChannel<Integer> channel = new BoundedChannel<>(8);
+        channel.send(1);
+        channel.send(2);
+        channel.send(3);
+
+        List<Integer> fullBatch = new ArrayList<>();
+        assertTrue(channel.receiveBatch(fullBatch, 2, TimeUnit.SECONDS.toNanos(1)));
+        assertEquals(List.of(1, 2), fullBatch);
+
+        List<Integer> timedBatch = new ArrayList<>();
+        assertTrue(channel.receiveBatch(timedBatch, 5, TimeUnit.MILLISECONDS.toNanos(50)));
+        assertEquals(List.of(3), timedBatch);
+
+        channel.send(4);
+        channel.close();
+        List<Integer> eofPartial = new ArrayList<>();
+        assertTrue(channel.receiveBatch(eofPartial, 5, TimeUnit.SECONDS.toNanos(1)));
+        assertEquals(List.of(4), eofPartial);
+
+        List<Integer> eofEmpty = new ArrayList<>();
+        assertFalse(channel.receiveBatch(eofEmpty, 5, TimeUnit.SECONDS.toNanos(1)));
+        assertTrue(eofEmpty.isEmpty());
+    }
+
+    @Test
+    void receiveSequencedAndFillRatioTrackStateAccurately() throws Exception {
+        BoundedChannel<String> channel = new BoundedChannel<>(4);
+        assertEquals(0.0, channel.fillRatio(), 1e-6);
+        channel.send("x");
+        channel.send("y");
+        assertEquals(2, channel.size());
+        assertEquals(0.5, channel.fillRatio(), 1e-6);
+        channel.close();
+
+        BoundedChannel.SequencedItem<String> s0 = channel.receiveSequenced();
+        BoundedChannel.SequencedItem<String> s1 = channel.receiveSequenced();
+        BoundedChannel.SequencedItem<String> eof = channel.receiveSequenced();
+
+        assertEquals(0L, s0.sequence());
+        assertEquals("x", s0.item());
+        assertEquals(1L, s1.sequence());
+        assertEquals("y", s1.item());
+        assertNull(eof);
+        assertEquals(0, channel.size());
+    }
 }

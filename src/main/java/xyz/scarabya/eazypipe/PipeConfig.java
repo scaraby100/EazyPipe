@@ -18,22 +18,32 @@ package xyz.scarabya.eazypipe;
 import java.util.Objects;
 import java.util.concurrent.ExecutorService;
 import java.util.function.BiConsumer;
+import xyz.scarabya.eazypipe.adaptive.AdaptiveConfig;
+import xyz.scarabya.eazypipe.metrics.PipelineMetricsListener;
 
 /**
  * Global configuration for executing a {@link Pipeline}.
  *
  * @param defaultBufferCapacity default capacity for inter-stage channels ({@code >= 1})
- * @param executorMode threading model used to run stage workers
+ * @param executorMode default threading model used when a stage leaves {@link StageKind#INHERIT}
  * @param customExecutor caller-supplied executor when {@code executorMode == ExecutorMode.CUSTOM}, otherwise {@code null}
- * @param errorStrategy strategy applied when processing or consuming an individual item throws an {@link Exception}
+ * @param errorStrategy default strategy applied when a stage uses {@link ErrorPolicy#INHERIT}
  * @param errorHandler optional listener notified as {@code (stageName, throwable)} when an item error is skipped
+ * @param cpuBudget global worker/permit budget for {@link StageKind#CPU_BOUND} stages ({@code >= 1})
+ * @param adaptiveConfig adaptive controller configuration ({@link AdaptiveConfig#disabled()} by default)
+ * @param contextPropagator optional thread-context propagator from caller into workers and items
+ * @param metricsListener optional zero-dependency telemetry/event listener
  */
 public record PipeConfig(
         int defaultBufferCapacity,
         ExecutorMode executorMode,
         ExecutorService customExecutor,
         ErrorStrategy errorStrategy,
-        BiConsumer<String, Throwable> errorHandler) {
+        BiConsumer<String, Throwable> errorHandler,
+        int cpuBudget,
+        AdaptiveConfig adaptiveConfig,
+        ContextPropagator contextPropagator,
+        PipelineMetricsListener metricsListener) {
 
     /**
      * Default inter-stage bounded channel capacity ({@value}).
@@ -53,7 +63,7 @@ public record PipeConfig(
     }
 
     /**
-     * Error handling strategy for stage failures.
+     * Global error handling strategy for stage failures when {@link ErrorPolicy#INHERIT} is active.
      */
     public enum ErrorStrategy {
         /** Immediately abort all channels and cancel all workers on any failure (default). */
@@ -80,6 +90,35 @@ public record PipeConfig(
             throw new IllegalArgumentException(
                     "customExecutor must be null unless executorMode is CUSTOM");
         }
+        if (cpuBudget < 1) {
+            throw new IllegalArgumentException("cpuBudget must be >= 1, got " + cpuBudget);
+        }
+        Objects.requireNonNull(adaptiveConfig, "adaptiveConfig must not be null");
+    }
+
+    /**
+     * Backward-compatible 5-argument constructor using default CPU budget and disabled adaptive control.
+     */
+    public PipeConfig(
+            int defaultBufferCapacity,
+            ExecutorMode executorMode,
+            ExecutorService customExecutor,
+            ErrorStrategy errorStrategy,
+            BiConsumer<String, Throwable> errorHandler) {
+        this(
+                defaultBufferCapacity,
+                executorMode,
+                customExecutor,
+                errorStrategy,
+                errorHandler,
+                defaultCpuBudget(),
+                AdaptiveConfig.disabled(),
+                null,
+                null);
+    }
+
+    private static int defaultCpuBudget() {
+        return Math.max(1, Runtime.getRuntime().availableProcessors());
     }
 
     /**
@@ -88,12 +127,7 @@ public record PipeConfig(
      * @return default {@link PipeConfig}
      */
     public static PipeConfig defaults() {
-        return new PipeConfig(
-                DEFAULT_BUFFER_CAPACITY,
-                ExecutorMode.VIRTUAL_THREADS,
-                null,
-                ErrorStrategy.FAIL_FAST,
-                null);
+        return builder().build();
     }
 
     /**
@@ -111,12 +145,7 @@ public record PipeConfig(
      * @return a platform-thread {@link PipeConfig}
      */
     public static PipeConfig platformThreads() {
-        return new PipeConfig(
-                DEFAULT_BUFFER_CAPACITY,
-                ExecutorMode.PLATFORM_THREADS,
-                null,
-                ErrorStrategy.FAIL_FAST,
-                null);
+        return builder().executorMode(ExecutorMode.PLATFORM_THREADS).build();
     }
 
     /**
@@ -127,13 +156,7 @@ public record PipeConfig(
      * @return a custom-executor {@link PipeConfig}
      */
     public static PipeConfig withExecutor(ExecutorService customExecutor) {
-        Objects.requireNonNull(customExecutor, "customExecutor must not be null");
-        return new PipeConfig(
-                DEFAULT_BUFFER_CAPACITY,
-                ExecutorMode.CUSTOM,
-                customExecutor,
-                ErrorStrategy.FAIL_FAST,
-                null);
+        return builder().customExecutor(customExecutor).build();
     }
 
     /**
@@ -155,28 +178,20 @@ public record PipeConfig(
         private ExecutorService customExecutor;
         private ErrorStrategy errorStrategy = ErrorStrategy.FAIL_FAST;
         private BiConsumer<String, Throwable> errorHandler;
+        private int cpuBudget = defaultCpuBudget();
+        private boolean cpuBudgetExplicit;
+        private AdaptiveConfig adaptiveConfig = AdaptiveConfig.disabled();
+        private ContextPropagator contextPropagator;
+        private PipelineMetricsListener metricsListener;
 
         private Builder() {
         }
 
-        /**
-         * Sets the default bounded channel capacity for stages that do not specify their own.
-         *
-         * @param defaultBufferCapacity capacity ({@code >= 1})
-         * @return this builder
-         */
         public Builder defaultBufferCapacity(int defaultBufferCapacity) {
             this.defaultBufferCapacity = defaultBufferCapacity;
             return this;
         }
 
-        /**
-         * Sets the executor mode. Selecting {@link ExecutorMode#VIRTUAL_THREADS} or
-         * {@link ExecutorMode#PLATFORM_THREADS} clears any previously set custom executor.
-         *
-         * @param executorMode the executor mode
-         * @return this builder
-         */
         public Builder executorMode(ExecutorMode executorMode) {
             this.executorMode = Objects.requireNonNull(executorMode, "executorMode must not be null");
             if (executorMode != ExecutorMode.CUSTOM) {
@@ -185,53 +200,57 @@ public record PipeConfig(
             return this;
         }
 
-        /**
-         * Configures a custom {@link ExecutorService} and switches {@code executorMode} to {@link ExecutorMode#CUSTOM}.
-         *
-         * @param customExecutor the executor service (must not be {@code null})
-         * @return this builder
-         */
         public Builder customExecutor(ExecutorService customExecutor) {
             this.customExecutor = Objects.requireNonNull(customExecutor, "customExecutor must not be null");
             this.executorMode = ExecutorMode.CUSTOM;
             return this;
         }
 
-        /**
-         * Sets the error handling strategy.
-         *
-         * @param errorStrategy the error strategy
-         * @return this builder
-         */
         public Builder errorStrategy(ErrorStrategy errorStrategy) {
             this.errorStrategy = Objects.requireNonNull(errorStrategy, "errorStrategy must not be null");
             return this;
         }
 
-        /**
-         * Sets an optional handler invoked when an item error is skipped under
-         * {@link ErrorStrategy#CONTINUE_ON_ITEM_ERROR}.
-         *
-         * @param errorHandler callback receiving {@code (stageName, throwable)}
-         * @return this builder
-         */
         public Builder errorHandler(BiConsumer<String, Throwable> errorHandler) {
             this.errorHandler = errorHandler;
             return this;
         }
 
-        /**
-         * Builds the {@link PipeConfig}.
-         *
-         * @return a new {@link PipeConfig}
-         */
+        public Builder cpuBudget(int cpuBudget) {
+            this.cpuBudget = cpuBudget;
+            this.cpuBudgetExplicit = true;
+            return this;
+        }
+
+        public Builder adaptive(AdaptiveConfig adaptiveConfig) {
+            this.adaptiveConfig = Objects.requireNonNull(adaptiveConfig, "adaptiveConfig must not be null");
+            if (!cpuBudgetExplicit && adaptiveConfig.enabled()) {
+                this.cpuBudget = adaptiveConfig.cpuBudget();
+            }
+            return this;
+        }
+
+        public Builder contextPropagator(ContextPropagator contextPropagator) {
+            this.contextPropagator = contextPropagator;
+            return this;
+        }
+
+        public Builder metricsListener(PipelineMetricsListener metricsListener) {
+            this.metricsListener = metricsListener;
+            return this;
+        }
+
         public PipeConfig build() {
             return new PipeConfig(
                     defaultBufferCapacity,
                     executorMode,
                     customExecutor,
                     errorStrategy,
-                    errorHandler);
+                    errorHandler,
+                    cpuBudget,
+                    adaptiveConfig,
+                    contextPropagator,
+                    metricsListener);
         }
     }
 }

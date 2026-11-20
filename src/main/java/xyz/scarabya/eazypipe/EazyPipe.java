@@ -24,7 +24,7 @@ import java.util.function.Supplier;
 import java.util.stream.Stream;
 
 /**
- * Entry point for building concurrent, backpressured {@link Pipeline}s.
+ * Entry point for building concurrent, backpressured, and optionally adaptive {@link Pipeline}s.
  *
  * <p>Example usage:
  * <pre>{@code
@@ -41,10 +41,6 @@ public final class EazyPipe {
 
     /**
      * Creates a pipeline backed by the given {@link PipeSource} using default configuration.
-     *
-     * @param source item producer
-     * @param <T> produced item type
-     * @return a new {@link Pipeline}
      */
     public static <T> Pipeline<T> from(PipeSource<T> source) {
         return from(PipeConfig.defaults(), StageConfig.defaults(), source);
@@ -52,11 +48,6 @@ public final class EazyPipe {
 
     /**
      * Creates a pipeline backed by the given {@link PipeSource} and source {@link StageConfig}.
-     *
-     * @param stageConfig source stage configuration
-     * @param source item producer
-     * @param <T> produced item type
-     * @return a new {@link Pipeline}
      */
     public static <T> Pipeline<T> from(StageConfig stageConfig, PipeSource<T> source) {
         return from(PipeConfig.defaults(), stageConfig, source);
@@ -64,11 +55,6 @@ public final class EazyPipe {
 
     /**
      * Creates a pipeline backed by the given {@link PipeSource} and global {@link PipeConfig}.
-     *
-     * @param config global pipeline configuration
-     * @param source item producer
-     * @param <T> produced item type
-     * @return a new {@link Pipeline}
      */
     public static <T> Pipeline<T> from(PipeConfig config, PipeSource<T> source) {
         return from(config, StageConfig.defaults(), source);
@@ -77,12 +63,6 @@ public final class EazyPipe {
     /**
      * Creates a pipeline backed by the given {@link PipeSource}, global {@link PipeConfig},
      * and source {@link StageConfig}.
-     *
-     * @param config global pipeline configuration
-     * @param stageConfig source stage configuration
-     * @param source item producer
-     * @param <T> produced item type
-     * @return a new {@link Pipeline}
      */
     public static <T> Pipeline<T> from(
             PipeConfig config,
@@ -93,16 +73,53 @@ public final class EazyPipe {
         Objects.requireNonNull(source, "source must not be null");
         return new Pipeline<>(
                 config,
-                new StageDefinition.SourceStage<>(stageConfig, source),
+                new StageDefinition.SourceStage<>(stageConfig, List.of(source)),
+                List.of());
+    }
+
+    /**
+     * Creates a pipeline merging items emitted concurrently by multiple {@link PipeSource}s.
+     * The downstream channel closes only once every merged source finishes producing.
+     */
+    @SafeVarargs
+    public static <T> Pipeline<T> merge(PipeSource<? extends T>... sources) {
+        Objects.requireNonNull(sources, "sources must not be null");
+        List<PipeSource<? extends T>> list = new ArrayList<>(sources.length);
+        for (PipeSource<? extends T> s : sources) {
+            list.add(Objects.requireNonNull(s, "sources must not contain null elements"));
+        }
+        return merge(PipeConfig.defaults(), list);
+    }
+
+    /**
+     * Creates a pipeline merging items emitted concurrently by a list of {@link PipeSource}s.
+     */
+    public static <T> Pipeline<T> merge(List<PipeSource<? extends T>> sources) {
+        return merge(PipeConfig.defaults(), sources);
+    }
+
+    /**
+     * Creates a pipeline merging items emitted concurrently by a list of {@link PipeSource}s
+     * using explicit {@link PipeConfig}.
+     */
+    public static <T> Pipeline<T> merge(PipeConfig config, List<PipeSource<? extends T>> sources) {
+        Objects.requireNonNull(config, "config must not be null");
+        Objects.requireNonNull(sources, "sources must not be null");
+        if (sources.isEmpty()) {
+            throw new IllegalArgumentException("sources must not be empty");
+        }
+        List<PipeSource<? extends T>> copy = new ArrayList<>(sources.size());
+        for (PipeSource<? extends T> s : sources) {
+            copy.add(Objects.requireNonNull(s, "sources must not contain null elements"));
+        }
+        return new Pipeline<>(
+                config,
+                new StageDefinition.SourceStage<>(StageConfig.named("merged-source"), copy),
                 List.of());
     }
 
     /**
      * Creates a pipeline emitting elements from the given {@link Iterable}.
-     *
-     * @param iterable source iterable
-     * @param <T> item type
-     * @return a new {@link Pipeline}
      */
     public static <T> Pipeline<T> fromIterable(Iterable<? extends T> iterable) {
         return fromIterable(PipeConfig.defaults(), iterable);
@@ -110,11 +127,6 @@ public final class EazyPipe {
 
     /**
      * Creates a pipeline emitting elements from the given {@link Iterable} with explicit {@link PipeConfig}.
-     *
-     * @param config global pipeline configuration
-     * @param iterable source iterable
-     * @param <T> item type
-     * @return a new {@link Pipeline}
      */
     public static <T> Pipeline<T> fromIterable(PipeConfig config, Iterable<? extends T> iterable) {
         Objects.requireNonNull(iterable, "iterable must not be null");
@@ -124,11 +136,7 @@ public final class EazyPipe {
     /**
      * Creates a pipeline lazily consuming a {@link Stream} provided by {@code streamSupplier}.
      * The supplied stream is closed automatically via try-with-resources when production completes,
-     * fails, or is cancelled.
-     *
-     * @param streamSupplier supplier creating the stream when the pipeline executes
-     * @param <T> item type
-     * @return a new {@link Pipeline}
+     * fails, drains, or is cancelled.
      */
     public static <T> Pipeline<T> fromStream(Supplier<? extends Stream<? extends T>> streamSupplier) {
         return fromStream(PipeConfig.defaults(), streamSupplier);
@@ -137,11 +145,6 @@ public final class EazyPipe {
     /**
      * Creates a pipeline lazily consuming a {@link Stream} provided by {@code streamSupplier}
      * with explicit {@link PipeConfig}.
-     *
-     * @param config global pipeline configuration
-     * @param streamSupplier supplier creating the stream when the pipeline executes
-     * @param <T> item type
-     * @return a new {@link Pipeline}
      */
     public static <T> Pipeline<T> fromStream(
             PipeConfig config,
@@ -163,10 +166,6 @@ public final class EazyPipe {
 
     /**
      * Creates a pipeline emitting the provided fixed items in order.
-     *
-     * @param items non-null elements to emit
-     * @param <T> item type
-     * @return a new {@link Pipeline}
      */
     @SafeVarargs
     public static <T> Pipeline<T> of(T... items) {

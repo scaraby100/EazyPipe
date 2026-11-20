@@ -22,12 +22,14 @@ import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
+import xyz.scarabya.eazypipe.metrics.PipelineMetricsSnapshot;
 
 /**
  * Handle representing a running or completed asynchronous {@link Pipeline} execution.
  *
  * <p>Implements {@link AutoCloseable}: closing an active execution cancels remaining work and waits
- * for all stage workers to exit cleanly.
+ * for all stage workers to exit cleanly. To stop an open/infinite source gracefully while letting
+ * already-emitted items finish draining downstream, call {@link #drain()} or {@link #requestDrain()}.
  *
  * @param <R> the terminal result type ({@link Void} for {@code start(...)} runs)
  */
@@ -88,7 +90,7 @@ public final class PipeExecution<R> implements AutoCloseable {
     }
 
     /**
-     * Waits uninterruptibly-styled (wrapping {@link InterruptedException} into {@link PipeException}
+     * Waits for completion (wrapping {@link InterruptedException} into {@link PipeException}
      * while preserving the thread's interrupt flag) and returns the terminal result.
      *
      * @return the terminal result (or {@code null} for {@code Void} runs)
@@ -105,7 +107,29 @@ public final class PipeExecution<R> implements AutoCloseable {
     }
 
     /**
-     * Requests cancellation of this pipeline execution, aborting channels and interrupting active workers.
+     * Signals source stage(s) to stop producing cleanly without aborting downstream stages.
+     * Already-emitted items continue draining through the remainder of the pipeline.
+     */
+    public void requestDrain() {
+        runtime.requestDrain();
+    }
+
+    /**
+     * Requests graceful drain via {@link #requestDrain()} and waits for all downstream stages
+     * to finish processing in-flight items.
+     *
+     * @return the terminal result after draining completes
+     * @throws InterruptedException if the waiting thread is interrupted
+     * @throws PipeException if a downstream stage fails while draining
+     * @throws CancellationException if {@link #cancel()} is invoked concurrently
+     */
+    public R drain() throws InterruptedException {
+        requestDrain();
+        return await();
+    }
+
+    /**
+     * Requests immediate cancellation of this pipeline execution, aborting channels and interrupting active workers.
      * Safe to invoke multiple times or after completion.
      */
     public void cancel() {
@@ -146,6 +170,16 @@ public final class PipeExecution<R> implements AutoCloseable {
      */
     public PipeStats stats() {
         return runtime.stats();
+    }
+
+    /**
+     * Returns detailed live or final observability metrics including per-stage telemetry
+     * and recorded adaptive {@link xyz.scarabya.eazypipe.adaptive.ScalingDecision}s.
+     *
+     * @return a {@link PipelineMetricsSnapshot}
+     */
+    public PipelineMetricsSnapshot metricsSnapshot() {
+        return runtime.metricsSnapshot();
     }
 
     /**

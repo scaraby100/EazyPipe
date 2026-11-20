@@ -16,12 +16,16 @@
 package xyz.scarabya.eazypipe;
 
 import java.util.ArrayDeque;
+import java.util.List;
 import java.util.Objects;
+import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.LongAdder;
 import java.util.concurrent.locks.Condition;
 import java.util.concurrent.locks.ReentrantLock;
 
 /**
- * Bounded, thread-safe FIFO channel with backpressure, clean EOF, and immediate abort support.
+ * Bounded, thread-safe FIFO channel with configurable {@link OverflowPolicy}, clean EOF,
+ * batch draining, monotonic receive sequencing, backpressure wait telemetry, and immediate abort/drain support.
  *
  * <p>Implemented on top of {@link ReentrantLock} and {@link Condition} rather than {@code synchronized}
  * to avoid pinning Java 21 virtual threads while waiting on a full or empty buffer.
@@ -30,46 +34,117 @@ import java.util.concurrent.locks.ReentrantLock;
  */
 final class BoundedChannel<T> {
 
+    enum SendStatus {
+        ENQUEUED,
+        DROPPED_NEWEST,
+        DROPPED_OLDEST
+    }
+
+    record SendResult(SendStatus status, long blockedNanos) { }
+
+    record SequencedItem<T>(long sequence, T item) { }
+
     private final int capacity;
+    private final OverflowPolicy overflowPolicy;
     private final ArrayDeque<T> buffer;
     private final ReentrantLock lock = new ReentrantLock();
     private final Condition notEmpty = lock.newCondition();
     private final Condition notFull = lock.newCondition();
 
+    private final AtomicInteger currentSize = new AtomicInteger();
+    private final LongAdder droppedCount = new LongAdder();
+    private final LongAdder sendWaitNanos = new LongAdder();
+    private final LongAdder receiveWaitNanos = new LongAdder();
+
+    private long nextReceiveSequence;
     private boolean closed;
     private boolean aborted;
+    private boolean draining;
     private Throwable abortCause;
 
     BoundedChannel(int capacity) {
+        this(capacity, OverflowPolicy.BLOCK);
+    }
+
+    BoundedChannel(int capacity, OverflowPolicy overflowPolicy) {
         if (capacity < 1) {
             throw new IllegalArgumentException("capacity must be >= 1, got " + capacity);
         }
         this.capacity = capacity;
+        this.overflowPolicy = Objects.requireNonNull(overflowPolicy, "overflowPolicy must not be null");
         this.buffer = new ArrayDeque<>(Math.min(capacity, 1024));
     }
 
     /**
-     * Enqueues a non-null item, blocking if the buffer is at capacity.
+     * Enqueues a non-null item applying this channel's {@link OverflowPolicy}.
      *
-     * @throws PipeAbortedException if the channel has been aborted before or while waiting
-     * @throws IllegalStateException if the channel was already closed
-     * @throws InterruptedException if the calling thread is interrupted while waiting
+     * @return {@code true} if the item was placed in the buffer, {@code false} if dropped via {@link OverflowPolicy#DROP_NEWEST}
      */
-    void send(T item) throws InterruptedException {
+    boolean send(T item) throws InterruptedException {
+        return sendTimed(item).status() != SendStatus.DROPPED_NEWEST;
+    }
+
+    /**
+     * Enqueues a non-null item while reporting both the overflow outcome and time spent blocked on backpressure.
+     */
+    SendResult sendTimed(T item) throws InterruptedException {
         Objects.requireNonNull(item, "Null items are not allowed in pipeline channels");
+        long blockedNanos = 0L;
         lock.lockInterruptibly();
         try {
-            while (buffer.size() == capacity && !aborted && !closed) {
-                notFull.await();
-            }
             if (aborted) {
                 throw new PipeAbortedException(abortCause);
+            }
+            if (draining) {
+                throw new PipeDrainingException();
             }
             if (closed) {
                 throw new IllegalStateException("Cannot send to a closed channel");
             }
+
+            if (buffer.size() == capacity) {
+                switch (overflowPolicy) {
+                    case BLOCK -> {
+                        while (buffer.size() == capacity && !aborted && !closed && !draining) {
+                            long waitStart = System.nanoTime();
+                            notFull.await();
+                            long delta = Math.max(0L, System.nanoTime() - waitStart);
+                            blockedNanos += delta;
+                            sendWaitNanos.add(delta);
+                        }
+                        if (aborted) {
+                            throw new PipeAbortedException(abortCause);
+                        }
+                        if (draining) {
+                            throw new PipeDrainingException();
+                        }
+                        if (closed) {
+                            throw new IllegalStateException("Cannot send to a closed channel");
+                        }
+                    }
+                    case DROP_OLDEST -> {
+                        buffer.removeFirst();
+                        buffer.addLast(item);
+                        droppedCount.increment();
+                        notEmpty.signal();
+                        return new SendResult(SendStatus.DROPPED_OLDEST, 0L);
+                    }
+                    case DROP_NEWEST -> {
+                        droppedCount.increment();
+                        return new SendResult(SendStatus.DROPPED_NEWEST, 0L);
+                    }
+                    case FAIL -> {
+                        droppedCount.increment();
+                        throw new ChannelOverflowException(
+                                "Channel overflowed at capacity " + capacity + " (OverflowPolicy.FAIL)");
+                    }
+                }
+            }
+
             buffer.addLast(item);
+            currentSize.incrementAndGet();
             notEmpty.signal();
+            return new SendResult(SendStatus.ENQUEUED, blockedNanos);
         } finally {
             lock.unlock();
         }
@@ -79,14 +154,14 @@ final class BoundedChannel<T> {
      * Dequeues the next item, blocking while the buffer is empty and open.
      *
      * @return the next item, or {@code null} when the channel is closed and fully drained
-     * @throws PipeAbortedException if the channel has been aborted before or while waiting
-     * @throws InterruptedException if the calling thread is interrupted while waiting
      */
     T receive() throws InterruptedException {
         lock.lockInterruptibly();
         try {
             while (buffer.isEmpty() && !closed && !aborted) {
+                long waitStart = System.nanoTime();
                 notEmpty.await();
+                receiveWaitNanos.add(Math.max(0L, System.nanoTime() - waitStart));
             }
             if (aborted) {
                 throw new PipeAbortedException(abortCause);
@@ -95,11 +170,102 @@ final class BoundedChannel<T> {
                 return null;
             }
             T item = buffer.removeFirst();
+            currentSize.decrementAndGet();
             notFull.signal();
             return item;
         } finally {
             lock.unlock();
         }
+    }
+
+    /**
+     * Dequeues the next item paired with a strictly monotonic FIFO sequence number.
+     *
+     * @return the sequenced item, or {@code null} on clean EOF
+     */
+    SequencedItem<T> receiveSequenced() throws InterruptedException {
+        lock.lockInterruptibly();
+        try {
+            while (buffer.isEmpty() && !closed && !aborted) {
+                long waitStart = System.nanoTime();
+                notEmpty.await();
+                receiveWaitNanos.add(Math.max(0L, System.nanoTime() - waitStart));
+            }
+            if (aborted) {
+                throw new PipeAbortedException(abortCause);
+            }
+            if (buffer.isEmpty()) {
+                return null;
+            }
+            T item = buffer.removeFirst();
+            currentSize.decrementAndGet();
+            long seq = nextReceiveSequence++;
+            notFull.signal();
+            return new SequencedItem<>(seq, item);
+        } finally {
+            lock.unlock();
+        }
+    }
+
+    /**
+     * Receives a batch of up to {@code maxSize} items into {@code target}, waiting up to {@code maxWaitNanos}
+     * after the first item arrives before flushing a partial batch.
+     *
+     * @return {@code true} if at least one item was placed in {@code target}, {@code false} on clean EOF
+     */
+    boolean receiveBatch(List<T> target, int maxSize, long maxWaitNanos) throws InterruptedException {
+        Objects.requireNonNull(target, "target must not be null");
+        if (maxSize < 1) {
+            throw new IllegalArgumentException("maxSize must be >= 1, got " + maxSize);
+        }
+        lock.lockInterruptibly();
+        try {
+            while (buffer.isEmpty() && !closed && !aborted) {
+                long waitStart = System.nanoTime();
+                notEmpty.await();
+                receiveWaitNanos.add(Math.max(0L, System.nanoTime() - waitStart));
+            }
+            if (aborted) {
+                throw new PipeAbortedException(abortCause);
+            }
+            if (buffer.isEmpty()) {
+                return false;
+            }
+
+            int drained = drainInto(target, maxSize);
+            if (target.size() < maxSize && !closed && !aborted && maxWaitNanos > 0L) {
+                long remaining = maxWaitNanos;
+                while (target.size() < maxSize && remaining > 0L && !closed && !aborted) {
+                    if (!buffer.isEmpty()) {
+                        drained += drainInto(target, maxSize);
+                        continue;
+                    }
+                    remaining = notEmpty.awaitNanos(remaining);
+                }
+                if (!buffer.isEmpty() && target.size() < maxSize && !aborted) {
+                    drained += drainInto(target, maxSize);
+                }
+            }
+            if (drained > 0) {
+                notFull.signalAll();
+            }
+            if (aborted) {
+                throw new PipeAbortedException(abortCause);
+            }
+            return !target.isEmpty();
+        } finally {
+            lock.unlock();
+        }
+    }
+
+    private int drainInto(List<T> target, int maxSize) {
+        int count = 0;
+        while (!buffer.isEmpty() && target.size() < maxSize) {
+            target.add(buffer.removeFirst());
+            currentSize.decrementAndGet();
+            count++;
+        }
+        return count;
     }
 
     /**
@@ -119,6 +285,22 @@ final class BoundedChannel<T> {
     }
 
     /**
+     * Signals upstream senders on this channel that graceful draining has started,
+     * causing blocked {@link #send} calls to exit with {@link PipeDrainingException}.
+     */
+    void beginDrain() {
+        lock.lock();
+        try {
+            if (!draining) {
+                draining = true;
+                notFull.signalAll();
+            }
+        } finally {
+            lock.unlock();
+        }
+    }
+
+    /**
      * Immediately aborts the channel, discards buffered items, and wakes all blocked senders and receivers.
      */
     void abort(Throwable cause) {
@@ -128,6 +310,7 @@ final class BoundedChannel<T> {
                 aborted = true;
                 abortCause = cause;
                 buffer.clear();
+                currentSize.set(0);
                 notEmpty.signalAll();
                 notFull.signalAll();
             }
@@ -138,5 +321,43 @@ final class BoundedChannel<T> {
 
     int capacity() {
         return capacity;
+    }
+
+    int size() {
+        return currentSize.get();
+    }
+
+    double fillRatio() {
+        return Math.min(1.0, (double) currentSize.get() / (double) capacity);
+    }
+
+    long droppedCount() {
+        return droppedCount.sum();
+    }
+
+    long sendWaitNanos() {
+        return sendWaitNanos.sum();
+    }
+
+    long receiveWaitNanos() {
+        return receiveWaitNanos.sum();
+    }
+
+    boolean isClosed() {
+        lock.lock();
+        try {
+            return closed;
+        } finally {
+            lock.unlock();
+        }
+    }
+
+    boolean isAborted() {
+        lock.lock();
+        try {
+            return aborted;
+        } finally {
+            lock.unlock();
+        }
     }
 }
