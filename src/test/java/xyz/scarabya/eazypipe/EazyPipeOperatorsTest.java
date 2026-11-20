@@ -84,7 +84,7 @@ class EazyPipeOperatorsTest {
         // Verify time-based flush when upstream pauses longer than maxWait.
         List<List<Integer>> timedBatches = EazyPipe.<Integer>from(emitter -> {
                     emitter.emit(1);
-                    Thread.sleep(90);
+                    Thread.sleep(150);
                     emitter.emit(2);
                 })
                 .batch(10, Duration.ofMillis(30))

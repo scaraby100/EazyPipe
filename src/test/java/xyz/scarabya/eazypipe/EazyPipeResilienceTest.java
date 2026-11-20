@@ -104,7 +104,6 @@ class EazyPipeResilienceTest {
     void overflowPoliciesWorkEndToEndThroughPipeline() {
         // OverflowPolicy.FAIL must abort pipeline with ChannelOverflowException cause.
         CountDownLatch sinkHold = new CountDownLatch(1);
-        CountDownLatch sinkEntered = new CountDownLatch(1);
         PipeExecution<Void> failExec = EazyPipe.<Integer>from(emitter -> {
                     for (int i = 0; i < 100; i++) {
                         emitter.emit(i);
@@ -115,15 +114,11 @@ class EazyPipeResilienceTest {
                                 .bufferCapacity(2)
                                 .overflowPolicy(OverflowPolicy.FAIL)
                                 .build(),
-                        item -> {
-                            sinkEntered.countDown();
-                            sinkHold.await();
-                        });
+                        item -> sinkHold.await());
 
         PipeException ex = assertTimeoutPreemptively(Duration.ofSeconds(3), () ->
                 assertThrows(PipeException.class, () -> {
                     try (failExec) {
-                        assertTrue(sinkEntered.await(2, TimeUnit.SECONDS));
                         failExec.join();
                     } finally {
                         sinkHold.countDown();
@@ -135,11 +130,16 @@ class EazyPipeResilienceTest {
         // OverflowPolicy.DROP_NEWEST keeps pipeline succeeding without blocking fast producer.
         CountDownLatch slowSinkLatch = new CountDownLatch(1);
         CountDownLatch firstConsumed = new CountDownLatch(1);
+        CountDownLatch sourceDone = new CountDownLatch(1);
         List<Integer> accepted = new CopyOnWriteArrayList<>();
 
         PipeExecution<Void> dropExec = EazyPipe.<Integer>from(emitter -> {
-                    for (int i = 1; i <= 50; i++) {
-                        emitter.emit(i);
+                    try {
+                        for (int i = 1; i <= 50; i++) {
+                            emitter.emit(i);
+                        }
+                    } finally {
+                        sourceDone.countDown();
                     }
                 })
                 .start(StageConfig.builder()
@@ -157,8 +157,8 @@ class EazyPipeResilienceTest {
 
         try (dropExec) {
             assertTimeoutPreemptively(Duration.ofSeconds(3), () -> {
+                assertTrue(sourceDone.await(2, TimeUnit.SECONDS));
                 assertTrue(firstConsumed.await(2, TimeUnit.SECONDS));
-                Thread.sleep(50);
                 slowSinkLatch.countDown();
                 dropExec.join();
             });
