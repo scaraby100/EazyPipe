@@ -1,5 +1,5 @@
 /*
- * Copyright 2017 Alessandro Patriarca.
+ * Copyright 2017-2026 Alessandro Patriarca.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -16,12 +16,18 @@
 package xyz.scarabya.eazypipe;
 
 /**
+ * Terminal stage of a pipeline that consumes incoming items.
  *
- * @author Alessandro Patriarca
+ * @param <I> the input item type
  */
-public class EazyPipeStart {
+@FunctionalInterface
+public interface PipeSink<I> {
 
-    public static final EazyPipe runPipe(Pipeable nextPipeable) {
-        return new EazyPipe(nextPipeable);
-    }
+    /**
+     * Consumes a single input item.
+     *
+     * @param item the item received from the upstream stage
+     * @throws Exception if an error occurs while consuming the item
+     */
+    void consume(I item) throws Exception;
 }

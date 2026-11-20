@@ -1,5 +1,5 @@
 /*
- * Copyright 2017 Alessandro Patriarca.
+ * Copyright 2017-2026 Alessandro Patriarca.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -15,93 +15,166 @@
  */
 package xyz.scarabya.eazypipe;
 
-import java.lang.reflect.InvocationTargetException;
-import java.util.Map;
-import java.util.concurrent.ConcurrentHashMap;
-import java.util.concurrent.ConcurrentLinkedQueue;
-import java.util.logging.Level;
-import java.util.logging.Logger;
+import java.util.ArrayList;
+import java.util.Collections;
+import java.util.Iterator;
+import java.util.List;
+import java.util.Objects;
+import java.util.function.Supplier;
+import java.util.stream.Stream;
 
 /**
+ * Entry point for building concurrent, backpressured {@link Pipeline}s.
  *
- * @author Alessandro Patriarca
+ * <p>Example usage:
+ * <pre>{@code
+ * List<String> results = EazyPipe.of("alpha", "beta", "gamma")
+ *         .filter(s -> s.length() > 4)
+ *         .map(StageConfig.parallel(2), String::toUpperCase)
+ *         .toList();
+ * }</pre>
  */
-public class EazyPipe {
+public final class EazyPipe {
 
-    private final Pipeable pipeable;
-    private final Map<Integer, Thread> pipeRunners;
-    private final PipeLink pipeLink;
-    private final EazyPipe prevEazyPipe;
-    private final long eazyPipeId;
-
-    private EazyPipe(EazyPipe prevEazyPipe, PipeLink pipeLink, Pipeable pipeable, long eazyPipeId) {
-        this.pipeable = pipeable;
-        this.prevEazyPipe = prevEazyPipe;
-        this.pipeLink = new PipeLink(pipeLink);
-        this.eazyPipeId = eazyPipeId;
-        pipeRunners = new ConcurrentHashMap();
-        for (int i = 0; i < pipeable.nThread; i++) {
-            pipeRunners.put(i, runThread());
-        }
+    private EazyPipe() {
     }
 
-    protected EazyPipe(Pipeable newPipe) {
-        this(null, null, newPipe, 0);
+    /**
+     * Creates a pipeline backed by the given {@link PipeSource} using default configuration.
+     *
+     * @param source item producer
+     * @param <T> produced item type
+     * @return a new {@link Pipeline}
+     */
+    public static <T> Pipeline<T> from(PipeSource<T> source) {
+        return from(PipeConfig.defaults(), StageConfig.defaults(), source);
     }
 
-    public final EazyPipe runPipe(Pipeable nextPipeable) {
-        return new EazyPipe(this, pipeLink, nextPipeable, eazyPipeId + 1);
+    /**
+     * Creates a pipeline backed by the given {@link PipeSource} and source {@link StageConfig}.
+     *
+     * @param stageConfig source stage configuration
+     * @param source item producer
+     * @param <T> produced item type
+     * @return a new {@link Pipeline}
+     */
+    public static <T> Pipeline<T> from(StageConfig stageConfig, PipeSource<T> source) {
+        return from(PipeConfig.defaults(), stageConfig, source);
     }
 
-    private Thread runThread() {
-        final ThreadPipe threadPipe = new ThreadPipe(pipeable, this.pipeLink);
-        final Thread thread = new Thread() {
-            @Override
-            public void run() {
-                try {
-                    pipeable.object.getClass().getDeclaredMethod(pipeable.method, ThreadPipe.class).invoke(pipeable.object, threadPipe);
-                    if (pipeable.callbackObject != null && areAllReady()) {
-                        pipeable.callbackObject.getClass().getDeclaredMethod(pipeable.callbackMethod).invoke(pipeable.callbackObject);
+    /**
+     * Creates a pipeline backed by the given {@link PipeSource} and global {@link PipeConfig}.
+     *
+     * @param config global pipeline configuration
+     * @param source item producer
+     * @param <T> produced item type
+     * @return a new {@link Pipeline}
+     */
+    public static <T> Pipeline<T> from(PipeConfig config, PipeSource<T> source) {
+        return from(config, StageConfig.defaults(), source);
+    }
+
+    /**
+     * Creates a pipeline backed by the given {@link PipeSource}, global {@link PipeConfig},
+     * and source {@link StageConfig}.
+     *
+     * @param config global pipeline configuration
+     * @param stageConfig source stage configuration
+     * @param source item producer
+     * @param <T> produced item type
+     * @return a new {@link Pipeline}
+     */
+    public static <T> Pipeline<T> from(
+            PipeConfig config,
+            StageConfig stageConfig,
+            PipeSource<T> source) {
+        Objects.requireNonNull(config, "config must not be null");
+        Objects.requireNonNull(stageConfig, "stageConfig must not be null");
+        Objects.requireNonNull(source, "source must not be null");
+        return new Pipeline<>(
+                config,
+                new StageDefinition.SourceStage<>(stageConfig, source),
+                List.of());
+    }
+
+    /**
+     * Creates a pipeline emitting elements from the given {@link Iterable}.
+     *
+     * @param iterable source iterable
+     * @param <T> item type
+     * @return a new {@link Pipeline}
+     */
+    public static <T> Pipeline<T> fromIterable(Iterable<? extends T> iterable) {
+        return fromIterable(PipeConfig.defaults(), iterable);
+    }
+
+    /**
+     * Creates a pipeline emitting elements from the given {@link Iterable} with explicit {@link PipeConfig}.
+     *
+     * @param config global pipeline configuration
+     * @param iterable source iterable
+     * @param <T> item type
+     * @return a new {@link Pipeline}
+     */
+    public static <T> Pipeline<T> fromIterable(PipeConfig config, Iterable<? extends T> iterable) {
+        Objects.requireNonNull(iterable, "iterable must not be null");
+        return from(config, StageConfig.named("iterable-source"), emitter -> emitter.emitAll(iterable));
+    }
+
+    /**
+     * Creates a pipeline lazily consuming a {@link Stream} provided by {@code streamSupplier}.
+     * The supplied stream is closed automatically via try-with-resources when production completes,
+     * fails, or is cancelled.
+     *
+     * @param streamSupplier supplier creating the stream when the pipeline executes
+     * @param <T> item type
+     * @return a new {@link Pipeline}
+     */
+    public static <T> Pipeline<T> fromStream(Supplier<? extends Stream<? extends T>> streamSupplier) {
+        return fromStream(PipeConfig.defaults(), streamSupplier);
+    }
+
+    /**
+     * Creates a pipeline lazily consuming a {@link Stream} provided by {@code streamSupplier}
+     * with explicit {@link PipeConfig}.
+     *
+     * @param config global pipeline configuration
+     * @param streamSupplier supplier creating the stream when the pipeline executes
+     * @param <T> item type
+     * @return a new {@link Pipeline}
+     */
+    public static <T> Pipeline<T> fromStream(
+            PipeConfig config,
+            Supplier<? extends Stream<? extends T>> streamSupplier) {
+        Objects.requireNonNull(streamSupplier, "streamSupplier must not be null");
+        return from(config, StageConfig.named("stream-source"), emitter -> {
+            try (Stream<? extends T> stream = Objects.requireNonNull(
+                    streamSupplier.get(), "streamSupplier must not return null")) {
+                Iterator<? extends T> iterator = stream.iterator();
+                while (iterator.hasNext()) {
+                    if (Thread.currentThread().isInterrupted()) {
+                        throw new InterruptedException("Stream source interrupted");
                     }
-                } catch (NoSuchMethodException ex) {
-                    Logger.getLogger(EazyPipe.class.getName()).log(Level.SEVERE, null, ex);
-                } catch (SecurityException ex) {
-                    Logger.getLogger(EazyPipe.class.getName()).log(Level.SEVERE, null, ex);
-                } catch (IllegalAccessException ex) {
-                    Logger.getLogger(EazyPipe.class.getName()).log(Level.SEVERE, null, ex);
-                } catch (IllegalArgumentException ex) {
-                    Logger.getLogger(EazyPipe.class.getName()).log(Level.SEVERE, null, ex);
-                } catch (InvocationTargetException ex) {
-                    Logger.getLogger(EazyPipe.class.getName()).log(Level.SEVERE, null, ex);
+                    emitter.emit(iterator.next());
                 }
             }
-        };
-        thread.start();
-        return thread;
+        });
     }
 
-    public boolean areAllReady() {
-        for (Thread runnerToCheck : pipeRunners.values()) {
-            if (runnerToCheck.isAlive()) {
-                return false;
-            }
+    /**
+     * Creates a pipeline emitting the provided fixed items in order.
+     *
+     * @param items non-null elements to emit
+     * @param <T> item type
+     * @return a new {@link Pipeline}
+     */
+    @SafeVarargs
+    public static <T> Pipeline<T> of(T... items) {
+        Objects.requireNonNull(items, "items must not be null");
+        List<T> snapshot = new ArrayList<>(items.length);
+        for (T item : items) {
+            snapshot.add(Objects.requireNonNull(item, "items must not contain null elements"));
         }
-        return true;
-    }
-
-    public final ConcurrentLinkedQueue getOutput() {
-        return pipeLink.getOutputChannel();
-    }
-
-    protected EazyPipe getPrevEazyPipe() {
-        return prevEazyPipe;
-    }
-
-    protected String whoAmI() {
-        return "EazyPipe ID: " + eazyPipeId;
-    }
-
-    protected String whatAmIRunning() {
-        return pipeable.method + " method from class " + pipeable.object.getClass().getSimpleName();
+        return fromIterable(Collections.unmodifiableList(snapshot));
     }
 }
