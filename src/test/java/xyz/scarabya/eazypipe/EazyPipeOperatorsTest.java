@@ -308,4 +308,123 @@ class EazyPipeOperatorsTest {
 
         assertTrue(ex.getCause() instanceof IllegalStateException);
     }
+
+    @Test
+    void teeWithNamedBranchReportsRealTelemetryInMetricsSnapshot() {
+        List<Integer> sideItems = new CopyOnWriteArrayList<>();
+        try (PipeExecution<List<Integer>> exec = EazyPipe.of(1, 2, 3, 4, 5)
+                .tee(StageConfig.named("audit"), sideItems::add)
+                .startToList()) {
+            List<Integer> result = exec.join();
+            assertEquals(List.of(1, 2, 3, 4, 5), result);
+            assertEquals(5, sideItems.size());
+
+            StageMetricsSnapshot auditSnap = exec.metricsSnapshot().stages().stream()
+                    .filter(s -> s.stageName().equals("audit"))
+                    .findFirst()
+                    .orElseThrow(() -> new AssertionError("Expected audit stage snapshot"));
+            assertEquals(5L, auditSnap.itemsCompleted());
+        }
+    }
+
+    @Test
+    void broadcastCountsItemsConsumedOnlyAfterAllBranchesCompleteWithoutSkip() {
+        Set<Integer> fast = ConcurrentHashMap.newKeySet();
+        Set<Integer> slow = ConcurrentHashMap.newKeySet();
+
+        try (PipeExecution<Void> exec = EazyPipe.of(1, 2, 3, 4, 5)
+                .startBroadcast(
+                        fast::add,
+                        n -> {
+                            Thread.sleep(8);
+                            slow.add(n);
+                        })) {
+            exec.join();
+            assertEquals(Set.of(1, 2, 3, 4, 5), fast);
+            assertEquals(Set.of(1, 2, 3, 4, 5), slow);
+            assertEquals(5L, exec.stats().itemsConsumed());
+        }
+
+        StageConfig skipCfg = StageConfig.builder()
+                .name("bcast-skip")
+                .bufferCapacity(4)
+                .errorPolicy(ErrorPolicy.SKIP)
+                .build();
+        Set<Integer> okBranch = ConcurrentHashMap.newKeySet();
+        Set<Integer> flakyBranch = ConcurrentHashMap.newKeySet();
+
+        try (PipeExecution<Void> exec = EazyPipe.of(1, 2, 3, 4, 5)
+                .startBroadcast(skipCfg, List.of(
+                        okBranch::add,
+                        n -> {
+                            if (n == 3) {
+                                throw new IllegalStateException("skip-3");
+                            }
+                            flakyBranch.add(n);
+                        }))) {
+            exec.join();
+            assertEquals(5, okBranch.size());
+            assertEquals(Set.of(1, 2, 4, 5), flakyBranch);
+            assertEquals(4L, exec.stats().itemsConsumed());
+            assertEquals(1L, exec.stats().errorsSkipped());
+        }
+    }
+
+    @Test
+    void broadcastAvoidsHeadOfLineBlockingBetweenBranches() throws Exception {
+        CountDownLatch branchAGate = new CountDownLatch(1);
+        CountDownLatch branchAEntered = new CountDownLatch(1);
+        CountDownLatch branchBSawTwo = new CountDownLatch(1);
+        List<Integer> branchAItems = new CopyOnWriteArrayList<>();
+        List<Integer> branchBItems = new CopyOnWriteArrayList<>();
+
+        StageConfig bcastCfg = StageConfig.builder()
+                .name("hol-bcast")
+                .bufferCapacity(1)
+                .parallelism(1)
+                .build();
+
+        try (PipeExecution<Void> exec = EazyPipe.<Integer>from(emitter -> {
+                    emitter.emit(1);
+                    emitter.emit(2);
+                    if (!branchBSawTwo.await(2, TimeUnit.SECONDS)) {
+                        throw new IllegalStateException("Branch B did not consume first 2 items in time");
+                    }
+                    emitter.emit(3);
+                    emitter.emit(4);
+                })
+                .startBroadcast(bcastCfg, List.of(
+                        n -> {
+                            if (n == 1) {
+                                branchAEntered.countDown();
+                                branchAGate.await();
+                            }
+                            branchAItems.add(n);
+                        },
+                        n -> {
+                            branchBItems.add(n);
+                            if (branchBItems.size() >= 2) {
+                                branchBSawTwo.countDown();
+                            }
+                        }))) {
+            assertTrue(branchAEntered.await(2, TimeUnit.SECONDS));
+
+            long deadlineNanos = System.nanoTime() + TimeUnit.SECONDS.toNanos(2);
+            while (branchBItems.size() < 3 && System.nanoTime() < deadlineNanos) {
+                Thread.sleep(5);
+            }
+            assertTrue(branchBItems.size() >= 3,
+                    "Expected branch B to receive >= 3 items while branch A stalled, got " + branchBItems);
+
+            branchAGate.countDown();
+            exec.join();
+
+            assertEquals(List.of(1, 2, 3, 4), branchAItems);
+            assertEquals(List.of(1, 2, 3, 4), branchBItems);
+            assertEquals(4L, exec.stats().itemsConsumed());
+        } finally {
+            branchAGate.countDown();
+            branchBSawTwo.countDown();
+        }
+    }
 }

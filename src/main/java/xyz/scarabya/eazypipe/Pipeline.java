@@ -300,6 +300,9 @@ public final class Pipeline<T> {
 
     /**
      * Configurable overload of {@link #startBroadcast(List)}.
+     *
+     * <p>An item counts toward {@link PipeStats#itemsConsumed()} only once every branch completes it without
+     * skip or overflow drop; items evicted via {@link OverflowPolicy#DROP_OLDEST} are never counted as consumed.
      */
     public PipeExecution<Void> startBroadcast(StageConfig stageConfig, List<PipeSink<? super T>> sinks) {
         Objects.requireNonNull(stageConfig, "stageConfig must not be null");

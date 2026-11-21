@@ -23,7 +23,7 @@ import java.util.Objects;
  *
  * @param elapsed total duration from start until completion (or elapsed time so far if still running)
  * @param itemsProduced number of items emitted by the source stage
- * @param itemsConsumed number of items delivered to the terminal sink stage
+ * @param itemsConsumed number of items delivered to and completed by the terminal sink stage (or all broadcast branches without drop/skip)
  * @param errorsSkipped number of item-level errors skipped under {@link PipeConfig.ErrorStrategy#CONTINUE_ON_ITEM_ERROR}
  * @param stageCount total number of stages in the pipeline (source + intermediate + sink)
  */

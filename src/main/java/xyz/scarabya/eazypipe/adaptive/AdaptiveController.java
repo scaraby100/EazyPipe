@@ -45,6 +45,8 @@ public final class AdaptiveController {
      * Public registration descriptor connecting a stage's telemetry and channel metrics to its permit target applier.
      */
     public record ManagedStage(
+            int stageIndex,
+            boolean controllable,
             String stageName,
             StageKind stageKind,
             int minConcurrency,
@@ -212,7 +214,10 @@ public final class AdaptiveController {
             for (int i = stages.size() - 1; i >= 0; i--) {
                 StageRuntimeState rs = stages.get(i);
                 ManagedStage d = rs.descriptor;
-                if (!d.hasInput() || d.stageKind() != StageKind.IO_BOUND || d.minConcurrency() == d.maxConcurrency()) {
+                if (!d.controllable()
+                        || !d.hasInput()
+                        || d.stageKind() != StageKind.IO_BOUND
+                        || d.minConcurrency() == d.maxConcurrency()) {
                     continue;
                 }
                 if (!persistent[i] || !cooldownReady[i]) {
@@ -243,7 +248,7 @@ public final class AdaptiveController {
             for (int i = 0; i < stages.size(); i++) {
                 StageRuntimeState rs = stages.get(i);
                 ManagedStage d = rs.descriptor;
-                if (d.stageKind() == StageKind.CPU_BOUND && d.hasInput()) {
+                if (d.controllable() && d.stageKind() == StageKind.CPU_BOUND && d.hasInput()) {
                     cpuStages.add(rs);
                     cpuStates.add(states[i]);
                     cpuViews.add(new CpuBudgetAllocator.CpuStageView(

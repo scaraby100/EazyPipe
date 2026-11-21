@@ -198,6 +198,8 @@ final class PipelineRuntime<R> {
             StageKind effectiveKind = sc.resolveEffectiveKind(config.executorMode());
 
             managedStages.add(new AdaptiveController.ManagedStage(
+                    i,
+                    true,
                     stageNames.get(i),
                     effectiveKind,
                     sc.minConcurrency(),
@@ -217,11 +219,6 @@ final class PipelineRuntime<R> {
         PipelineMetricsListener listener = config.metricsListener() != null
                 ? config.metricsListener()
                 : PipelineMetricsListener.noop();
-        AdaptiveController adaptiveController = new AdaptiveController(
-                config.adaptiveConfig(),
-                config.cpuBudget(),
-                managedStages,
-                listener);
 
         boolean needsCpuPool = false;
         for (int i = 1; i < stages.size(); i++) {
@@ -244,6 +241,7 @@ final class PipelineRuntime<R> {
 
         AtomicInteger[] stageRemaining = new AtomicInteger[stages.size()];
         List<WorkerTask> plannedTasks = new ArrayList<>();
+        List<AdaptiveController.ManagedStage> auxManagedStages = new ArrayList<>();
 
         // Build all worker tasks before submitting so totalRemainingWorkers is exact upfront.
         for (int i = 0; i < stages.size(); i++) {
@@ -340,6 +338,24 @@ final class PipelineRuntime<R> {
                     int sideWorkers = sideCfg.maxConcurrency();
                     AtomicInteger sideRemaining = new AtomicInteger(sideWorkers);
                     String sideName = sideCfg.resolveName(sName + "-tee");
+                    StageTelemetry sideTelemetry = new StageTelemetry();
+                    auxManagedStages.add(new AdaptiveController.ManagedStage(
+                            -1,
+                            false,
+                            sideName,
+                            sideCfg.resolveEffectiveKind(config.executorMode()),
+                            sideWorkers,
+                            sideWorkers,
+                            sideTelemetry,
+                            true,
+                            false,
+                            sideChannel::fillRatio,
+                            () -> 0.0,
+                            sideChannel::receiveWaitNanos,
+                            () -> 0L,
+                            sideChannel::droppedCount,
+                            () -> sideWorkers,
+                            ignored -> { }));
                     int stageIdx = i;
 
                     for (int w = 0; w < mainWorkers; w++) {
@@ -357,7 +373,8 @@ final class PipelineRuntime<R> {
                                 sideName,
                                 sideCfg.kind(),
                                 false,
-                                rt -> rt.runAuxSinkWorker(sideName, sideCfg, teeStage.sideSink(), sideChannel),
+                                rt -> rt.runAuxSinkWorker(
+                                        sideName, sideCfg, teeStage.sideSink(), sideChannel, sideTelemetry),
                                 rt -> rt.finishAuxStage(sideName, sideCfg, sideRemaining)));
                     }
                 }
@@ -388,6 +405,33 @@ final class PipelineRuntime<R> {
                     }
                     int branchWorkersPerSink = broadcastStage.config().maxConcurrency();
                     AtomicInteger totalBranchWorkers = new AtomicInteger(sinkCount * branchWorkersPerSink);
+                    List<String> branchNames = new ArrayList<>(sinkCount);
+                    List<StageTelemetry> branchTelemetries = new ArrayList<>(sinkCount);
+                    StageKind branchEffectiveKind = broadcastStage.config().resolveEffectiveKind(config.executorMode());
+                    for (int b = 0; b < sinkCount; b++) {
+                        String branchName = sName + "-branch-" + b;
+                        branchNames.add(branchName);
+                        StageTelemetry branchTelemetry = new StageTelemetry();
+                        branchTelemetries.add(branchTelemetry);
+                        BoundedChannel<Object> bCh = branchChannels.get(b);
+                        auxManagedStages.add(new AdaptiveController.ManagedStage(
+                                -1,
+                                false,
+                                branchName,
+                                branchEffectiveKind,
+                                branchWorkersPerSink,
+                                branchWorkersPerSink,
+                                branchTelemetry,
+                                true,
+                                false,
+                                bCh::fillRatio,
+                                () -> 0.0,
+                                bCh::receiveWaitNanos,
+                                () -> 0L,
+                                bCh::droppedCount,
+                                () -> branchWorkersPerSink,
+                                ignored -> { }));
+                    }
                     int stageIdx = i;
 
                     plannedTasks.add(new WorkerTask(
@@ -395,7 +439,8 @@ final class PipelineRuntime<R> {
                             sName,
                             sKind,
                             false,
-                            rt -> rt.runBroadcastDispatcher(stageIdx, sName, broadcastStage, branchChannels),
+                            rt -> rt.runBroadcastDispatcher(
+                                    stageIdx, broadcastStage, branchChannels, branchNames),
                             rt -> {
                                 for (BoundedChannel<Object> bCh : branchChannels) {
                                     bCh.close();
@@ -405,7 +450,8 @@ final class PipelineRuntime<R> {
                     for (int b = 0; b < sinkCount; b++) {
                         BoundedChannel<Object> bCh = branchChannels.get(b);
                         PipeSink<?> branchSink = broadcastStage.sinks().get(b);
-                        String branchName = sName + "-branch-" + b;
+                        String branchName = branchNames.get(b);
+                        StageTelemetry branchTelemetry = branchTelemetries.get(b);
                         for (int bw = 0; bw < branchWorkersPerSink; bw++) {
                             plannedTasks.add(new WorkerTask(
                                     -1,
@@ -413,7 +459,7 @@ final class PipelineRuntime<R> {
                                     sKind,
                                     false,
                                     rt -> rt.runAuxSinkWorker(
-                                            branchName, broadcastStage.config(), branchSink, bCh),
+                                            branchName, broadcastStage.config(), branchSink, bCh, branchTelemetry),
                                     rt -> rt.finishAuxStage(branchName, broadcastStage.config(), totalBranchWorkers)));
                         }
                     }
@@ -433,6 +479,13 @@ final class PipelineRuntime<R> {
                 }
             }
         }
+
+        managedStages.addAll(auxManagedStages);
+        AdaptiveController adaptiveController = new AdaptiveController(
+                config.adaptiveConfig(),
+                config.cpuBudget(),
+                managedStages,
+                listener);
 
         // Rebind WorkerTask runnables now that runtime instance exists.
         PipelineRuntime<R> runtime = new PipelineRuntime<>(
@@ -876,12 +929,13 @@ final class PipelineRuntime<R> {
 
     private void runBroadcastDispatcher(
             int stageIndex,
-            String stageName,
             StageDefinition.BroadcastSinkStage<?> stage,
-            List<BoundedChannel<Object>> branchChannels) throws Exception {
+            List<BoundedChannel<Object>> branchChannels,
+            List<String> branchNames) throws Exception {
         BoundedChannel<Object> inChannel = channels.get(stageIndex - 1);
         StageTelemetry telemetry = stageTelemetries.get(stageIndex);
         OverflowPolicy policy = stage.config().overflowPolicy();
+        int branchCount = branchChannels.size();
 
         while (!terminated.get() && !Thread.currentThread().isInterrupted()) {
             Object raw = inChannel.receive();
@@ -892,12 +946,29 @@ final class PipelineRuntime<R> {
             long t0 = System.nanoTime();
             long blocked = 0L;
             try {
-                for (int b = 0; b < branchChannels.size(); b++) {
-                    BoundedChannel.SendResult res = sendToChannel(
-                            branchChannels.get(b), raw, stageName + "-branch-" + b, policy);
-                    blocked += res.blockedNanos();
+                BroadcastItem item = new BroadcastItem(
+                        raw, new AtomicInteger(branchCount), new AtomicBoolean(false));
+                boolean[] sent = new boolean[branchCount];
+                for (int b = 0; b < branchCount; b++) {
+                    BoundedChannel.SendResult res = trySendToChannel(
+                            branchChannels.get(b), item, branchNames.get(b), policy);
+                    if (res != null) {
+                        sent[b] = true;
+                        if (res.status() == BoundedChannel.SendStatus.DROPPED_NEWEST) {
+                            markBroadcastBranchDropped(item);
+                        }
+                    }
                 }
-                itemsConsumed.incrementAndGet();
+                for (int b = 0; b < branchCount; b++) {
+                    if (!sent[b]) {
+                        BoundedChannel.SendResult res = sendToChannel(
+                                branchChannels.get(b), item, branchNames.get(b), policy);
+                        blocked += res.blockedNanos();
+                        if (res.status() == BoundedChannel.SendStatus.DROPPED_NEWEST) {
+                            markBroadcastBranchDropped(item);
+                        }
+                    }
+                }
                 telemetry.onProcessingSuccess(Math.max(0L, (System.nanoTime() - t0) - blocked));
             } catch (PipeAbortedException | InterruptedException ex) {
                 telemetry.onProcessingAborted();
@@ -907,6 +978,11 @@ final class PipelineRuntime<R> {
                 throw t;
             }
         }
+    }
+
+    private static void markBroadcastBranchDropped(BroadcastItem item) {
+        item.failed().set(true);
+        item.remaining().decrementAndGet();
     }
 
     @SuppressWarnings("unchecked")
@@ -965,25 +1041,35 @@ final class PipelineRuntime<R> {
             String auxName,
             StageConfig auxConfig,
             PipeSink<?> rawSink,
-            BoundedChannel<Object> auxChannel) throws Exception {
+            BoundedChannel<Object> auxChannel,
+            StageTelemetry telemetry) throws Exception {
         PipeSink<Object> sink = (PipeSink<Object>) rawSink;
-        StageTelemetry dummyTelemetry = new StageTelemetry();
         long[] zeroBlocked = new long[1];
 
         while (!terminated.get() && !Thread.currentThread().isInterrupted()) {
-            Object raw = auxChannel.receive();
-            if (raw == null) {
+            Object received = auxChannel.receive();
+            if (received == null) {
                 break;
             }
+            BroadcastItem broadcastItem = received instanceof BroadcastItem bi ? bi : null;
+            Object raw = broadcastItem != null ? broadcastItem.raw() : received;
             Object payload = unwrapPayload(raw);
-            executeWithTelemetry(
+            ItemOutcome outcome = executeWithTelemetry(
                     auxName,
                     auxConfig,
-                    dummyTelemetry,
+                    telemetry,
                     payload,
                     zeroBlocked,
                     isCpuRouted(auxConfig, config.executorMode()),
                     () -> withContext(raw, () -> sink.consume(payload)));
+            if (broadcastItem != null) {
+                if (outcome == ItemOutcome.SKIPPED) {
+                    broadcastItem.failed().set(true);
+                }
+                if (broadcastItem.remaining().decrementAndGet() == 0 && !broadcastItem.failed().get()) {
+                    itemsConsumed.incrementAndGet();
+                }
+            }
         }
     }
 
@@ -999,6 +1085,23 @@ final class PipelineRuntime<R> {
         try {
             BoundedChannel.SendResult res = channel.sendTimed(item);
             if (res.status() != BoundedChannel.SendStatus.ENQUEUED) {
+                metricsListener.onChannelOverflow(downstreamName, policy);
+            }
+            return res;
+        } catch (ChannelOverflowException ex) {
+            metricsListener.onChannelOverflow(downstreamName, OverflowPolicy.FAIL);
+            throw ex;
+        }
+    }
+
+    private BoundedChannel.SendResult trySendToChannel(
+            BoundedChannel<Object> channel,
+            Object item,
+            String downstreamName,
+            OverflowPolicy policy) throws InterruptedException {
+        try {
+            BoundedChannel.SendResult res = channel.trySend(item);
+            if (res != null && res.status() != BoundedChannel.SendStatus.ENQUEUED) {
                 metricsListener.onChannelOverflow(downstreamName, policy);
             }
             return res;

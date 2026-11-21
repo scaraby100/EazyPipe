@@ -81,6 +81,8 @@ class AdaptiveControllerTest {
                 config,
                 4,
                 List.of(new AdaptiveController.ManagedStage(
+                        0,
+                        true,
                         "io-stage",
                         StageKind.IO_BOUND,
                         1,
@@ -196,12 +198,12 @@ class AdaptiveControllerTest {
                 6,
                 List.of(
                         new AdaptiveController.ManagedStage(
-                                "dup", StageKind.CPU_BOUND, 1, 6, t1,
+                                0, true, "dup", StageKind.CPU_BOUND, 1, 6, t1,
                                 true, true, () -> 0.90, () -> 0.10,
                                 () -> 0L, () -> 0L, () -> 0L,
                                 target1::get, target1::set),
                         new AdaptiveController.ManagedStage(
-                                "dup", StageKind.CPU_BOUND, 1, 6, t2,
+                                1, true, "dup", StageKind.CPU_BOUND, 1, 6, t2,
                                 true, true, () -> 0.05, () -> 0.10,
                                 () -> 100_000_000L, () -> 0L, () -> 0L,
                                 target2::get, target2::set)),
@@ -242,12 +244,12 @@ class AdaptiveControllerTest {
                 6,
                 List.of(
                         new AdaptiveController.ManagedStage(
-                                "upstream-io", StageKind.IO_BOUND, 1, 16, upstreamTelemetry,
+                                0, true, "upstream-io", StageKind.IO_BOUND, 1, 16, upstreamTelemetry,
                                 true, true, () -> 0.95, () -> 0.92,
                                 () -> 0L, () -> 0L, () -> 0L,
                                 upstreamTarget::get, upstreamTarget::set),
                         new AdaptiveController.ManagedStage(
-                                "downstream-io", StageKind.IO_BOUND, 1, 16, downstreamTelemetry,
+                                1, true, "downstream-io", StageKind.IO_BOUND, 1, 16, downstreamTelemetry,
                                 true, true, () -> 0.92, () -> 0.95,
                                 () -> 0L, () -> 0L, () -> 0L,
                                 downstreamTarget::get, downstreamTarget::set)),
@@ -328,5 +330,39 @@ class AdaptiveControllerTest {
                     d.stageName().equals("slow-io") && d.newConcurrency() > d.previousConcurrency()));
             assertFalse(exec.metricsSnapshot().stages().isEmpty());
         }
+    }
+
+    @Test
+    void nonControllableAuxiliaryStagesAppearInSnapshotsWithoutScaling() {
+        MutableClock clock = new MutableClock();
+        StageTelemetry auxTelemetry = new StageTelemetry();
+        AtomicInteger auxTarget = new AtomicInteger(2);
+
+        AdaptiveConfig config = AdaptiveConfig.builder()
+                .clock(clock)
+                .emaAlpha(1.0)
+                .persistenceTicks(1)
+                .cooldown(Duration.ZERO)
+                .build();
+
+        AdaptiveController controller = new AdaptiveController(
+                config,
+                4,
+                List.of(new AdaptiveController.ManagedStage(
+                        -1, false, "aux-branch", StageKind.IO_BOUND, 1, 8, auxTelemetry,
+                        true, false, () -> 0.95, () -> 0.0,
+                        () -> 0L, () -> 0L, () -> 0L,
+                        auxTarget::get, auxTarget::set)),
+                null);
+
+        auxTelemetry.onProcessingStart();
+        auxTelemetry.onProcessingSuccess(5_000_000L);
+        List<ScalingDecision> decisions = controller.tick();
+
+        assertTrue(decisions.isEmpty());
+        assertEquals(2, auxTarget.get());
+        assertEquals(1, controller.currentStageSnapshots().size());
+        assertEquals("aux-branch", controller.currentStageSnapshots().get(0).stageName());
+        assertEquals(1L, controller.currentStageSnapshots().get(0).itemsCompleted());
     }
 }
