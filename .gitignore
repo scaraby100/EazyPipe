@@ -1,5 +1,6 @@
 /nb-configuration.xml
 /target/
+/eazypipe-benchmarks/target/
 .idea/
 *.iml
 .vscode/
