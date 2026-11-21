@@ -164,15 +164,30 @@ public final class Pipeline<T> {
      * Throttles throughput passing through this point in the pipeline to at most {@code permitsPerSecond}.
      */
     public Pipeline<T> rateLimit(double permitsPerSecond) {
-        return rateLimit(StageConfig.defaults(), permitsPerSecond);
+        return rateLimit(StageConfig.defaults(), permitsPerSecond, 1);
+    }
+
+    /**
+     * Throttles throughput passing through this point in the pipeline to at most {@code permitsPerSecond}
+     * while allowing an initial/idle burst of up to {@code burst} permits.
+     */
+    public Pipeline<T> rateLimit(double permitsPerSecond, int burst) {
+        return rateLimit(StageConfig.defaults(), permitsPerSecond, burst);
     }
 
     /**
      * Configurable overload of {@link #rateLimit(double)}.
      */
     public Pipeline<T> rateLimit(StageConfig stageConfig, double permitsPerSecond) {
+        return rateLimit(stageConfig, permitsPerSecond, 1);
+    }
+
+    /**
+     * Configurable overload of {@link #rateLimit(double, int)}.
+     */
+    public Pipeline<T> rateLimit(StageConfig stageConfig, double permitsPerSecond, int burst) {
         Objects.requireNonNull(stageConfig, "stageConfig must not be null");
-        return appendStage(new StageDefinition.RateLimitStage<>(stageConfig, permitsPerSecond));
+        return appendStage(new StageDefinition.RateLimitStage<>(stageConfig, permitsPerSecond, burst));
     }
 
     /**

@@ -21,6 +21,7 @@ import static org.junit.jupiter.api.Assertions.assertTimeoutPreemptively;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.time.Duration;
+import java.util.Arrays;
 import java.util.List;
 import java.util.Optional;
 import java.util.concurrent.CopyOnWriteArrayList;
@@ -136,7 +137,7 @@ class EazyPipeErrorHandlingTest {
                 .errorStrategy(PipeConfig.ErrorStrategy.CONTINUE_ON_ITEM_ERROR)
                 .build();
 
-        PipeException ex = assertThrows(PipeException.class, () ->
+        AssertionError err = assertThrows(AssertionError.class, () ->
                 EazyPipe.of(1, 2)
                         .configure(resilientConfig)
                         .map(StageConfig.named("oom-sim"), n -> {
@@ -144,8 +145,10 @@ class EazyPipeErrorHandlingTest {
                         })
                         .toList());
 
-        assertEquals(Optional.of("oom-sim"), ex.stageName());
-        assertTrue(ex.getCause() instanceof AssertionError);
+        assertEquals("fatal error", err.getMessage());
+        assertTrue(Arrays.stream(err.getSuppressed())
+                .anyMatch(t -> t instanceof PipeException pe
+                        && Optional.of("oom-sim").equals(pe.stageName())));
     }
 
     @Test

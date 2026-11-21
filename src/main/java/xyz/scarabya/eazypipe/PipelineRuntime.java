@@ -300,7 +300,8 @@ final class PipelineRuntime<R> {
                 case StageDefinition.RateLimitStage<?> rlStage -> {
                     int maxWorkers = rlStage.config().maxConcurrency();
                     stageRemaining[i] = new AtomicInteger(maxWorkers);
-                    TokenBucketRateLimiter limiter = new TokenBucketRateLimiter(rlStage.permitsPerSecond());
+                    TokenBucketRateLimiter limiter =
+                            new TokenBucketRateLimiter(rlStage.permitsPerSecond(), rlStage.burst());
                     rateLimiters.add(limiter);
                     int stageIdx = i;
                     for (int w = 0; w < maxWorkers; w++) {
@@ -1229,7 +1230,9 @@ final class PipelineRuntime<R> {
             return error;
         }
         if (error instanceof Error err) {
-            return new PipeException(stageName, "Stage '" + stageName + "' threw an Error: " + err.getMessage(), err);
+            err.addSuppressed(new PipeException(
+                    stageName, "Stage '" + stageName + "' threw an Error: " + err, null));
+            return err;
         }
         String message = error.getMessage();
         String detail = (message == null || message.isBlank())
