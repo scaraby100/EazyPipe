@@ -42,7 +42,8 @@ public final class IoConcurrencyLimiter {
             int maxConcurrency,
             double emaServiceNanos,
             double baselineServiceNanos,
-            double emaErrorRate) {
+            double emaErrorRate,
+            boolean braked) {
     }
 
     private IoConcurrencyLimiter() {
@@ -64,7 +65,10 @@ public final class IoConcurrencyLimiter {
                 && stage.emaServiceNanos() > tuning.ioLatencyBeta() * stage.baselineServiceNanos();
         boolean errorSaturated = stage.emaErrorRate() > HIGH_ERROR_THRESHOLD;
 
-        if (stage.state() == StageState.BACKPRESSURED || latencySaturated || errorSaturated) {
+        if (stage.state() == StageState.BACKPRESSURED
+                || latencySaturated
+                || errorSaturated
+                || (stage.braked() && stage.state() != StageState.BOTTLENECK)) {
             int stepDown = Math.max(1, (int) Math.ceil(current * 0.25));
             return Math.max(min, current - stepDown);
         }
@@ -74,7 +78,7 @@ public final class IoConcurrencyLimiter {
             return Math.max(min, current - stepDown);
         }
 
-        if (stage.state() == StageState.BOTTLENECK) {
+        if (stage.state() == StageState.BOTTLENECK && !stage.braked()) {
             boolean healthyLatency = stage.baselineServiceNanos() <= 0.0
                     || stage.emaServiceNanos() <= tuning.ioLatencyAlpha() * stage.baselineServiceNanos();
             boolean healthyErrors = stage.emaErrorRate() <= HEALTHY_ERROR_THRESHOLD;

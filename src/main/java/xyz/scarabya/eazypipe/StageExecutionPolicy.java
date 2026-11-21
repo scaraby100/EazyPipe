@@ -90,6 +90,7 @@ final class StageExecutionPolicy {
                 if (policy == ErrorPolicy.RETRY) {
                     attempt++;
                     if (retrySpec.shouldRetry(attempt, ex)) {
+                        telemetry.onRetry();
                         Duration delay = retrySpec.delayForAttempt(attempt);
                         if (!delay.isZero() && !delay.isNegative()) {
                             try {

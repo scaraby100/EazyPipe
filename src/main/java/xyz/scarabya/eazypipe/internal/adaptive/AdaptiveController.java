@@ -214,6 +214,52 @@ public final class AdaptiveController {
 
             List<ScalingDecision> emitted = new ArrayList<>();
 
+            // Compute main-chain relative flows and downstream propagation brakes.
+            int mainCount = 0;
+            for (StageRuntimeState rs : stages) {
+                if (rs.descriptor.stageIndex() >= 0) {
+                    mainCount++;
+                }
+            }
+            int[] mainPos = new int[mainCount];
+            double[] mainFanOuts = new double[mainCount];
+            StageState[] mainStates = new StageState[mainCount];
+            StageKind[] mainKinds = new StageKind[mainCount];
+            boolean[] mainHasOut = new boolean[mainCount];
+            double[] mainOutFills = new double[mainCount];
+            double[] mainSvc = new double[mainCount];
+            double[] mainBaseSvc = new double[mainCount];
+            double[] mainRetry = new double[mainCount];
+            int k = 0;
+            for (int i = 0; i < stages.size(); i++) {
+                StageRuntimeState rs = stages.get(i);
+                ManagedStage d = rs.descriptor;
+                if (d.stageIndex() >= 0) {
+                    mainPos[k] = i;
+                    mainFanOuts[k] = rs.lastSnapshot.emaFanOut();
+                    mainStates[k] = states[i];
+                    mainKinds[k] = d.stageKind();
+                    mainHasOut[k] = d.hasOutput();
+                    mainOutFills[k] = rs.lastSnapshot.emaOutputFill();
+                    mainSvc[k] = rs.lastSnapshot.emaServiceNanos();
+                    mainBaseSvc[k] = rs.lastSnapshot.baselineServiceNanos();
+                    mainRetry[k] = rs.lastSnapshot.emaRetryRate();
+                    k++;
+                }
+            }
+            double[] mainFlows = TopologyAnalyzer.relativeFlows(mainFanOuts);
+            boolean[] mainBraked = TopologyAnalyzer.braked(
+                    mainStates, mainKinds, mainHasOut, mainOutFills, mainSvc, mainBaseSvc, mainRetry, tuning);
+
+            double[] relativeFlows = new double[stages.size()];
+            java.util.Arrays.fill(relativeFlows, 1.0);
+            boolean[] braked = new boolean[stages.size()];
+            for (int m = 0; m < mainCount; m++) {
+                int idx = mainPos[m];
+                relativeFlows[idx] = mainFlows[m];
+                braked[idx] = mainBraked[m];
+            }
+
             // 2. Inspect IO_BOUND stages strictly from downstream to upstream.
             for (int i = stages.size() - 1; i >= 0; i--) {
                 StageRuntimeState rs = stages.get(i);
@@ -224,7 +270,7 @@ public final class AdaptiveController {
                         || d.minConcurrency() == d.maxConcurrency()) {
                     continue;
                 }
-                if (!persistent[i] || !cooldownReady[i]) {
+                if (!(persistent[i] || braked[i]) || !cooldownReady[i]) {
                     continue;
                 }
 
@@ -238,10 +284,12 @@ public final class AdaptiveController {
                         d.maxConcurrency(),
                         snap.emaServiceNanos(),
                         snap.baselineServiceNanos(),
-                        snap.emaErrorRate());
+                        snap.emaErrorRate(),
+                        braked[i]);
                 int next = IoConcurrencyLimiter.computeTarget(view, tuning);
                 if (next != current && !shouldSuppressIncrease(current, next, tuning.minRelativeChange())) {
-                    emitted.add(applyChange(rs, states[i], current, next, now, "IO AIMD/Vegas: " + states[i]));
+                    String reason = braked[i] ? "Downstream brake: " + states[i] : "IO AIMD/Vegas: " + states[i];
+                    emitted.add(applyChange(rs, states[i], current, next, now, reason));
                 }
             }
 
@@ -263,7 +311,9 @@ public final class AdaptiveController {
                             d.maxConcurrency(),
                             rs.lastSnapshot.emaServiceNanos(),
                             cooldownReady[i],
-                            persistent[i]));
+                            persistent[i],
+                            relativeFlows[i],
+                            braked[i]));
                 }
             }
 

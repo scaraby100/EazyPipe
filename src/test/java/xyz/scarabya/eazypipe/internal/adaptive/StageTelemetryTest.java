@@ -112,11 +112,23 @@ class StageTelemetryTest {
                 snapshotWith(0.25, 0.10, 0.25, 0.0, 1), tuning, true, true, StageState.BALANCED));
     }
 
+    @Test
+    void tracksEmaFanOutFromInputAndOutputCounts() {
+        StageTelemetry telemetry = new StageTelemetry();
+        telemetry.onInput(10);
+        for (int i = 0; i < 30; i++) {
+            telemetry.onOutput();
+        }
+        StageTelemetry.Snapshot snap = telemetry.sample(
+                100_000_000L, 1.0, 0.5, 0.5, 0L, 0L, 0L, 1, 0.01);
+        assertEquals(3.0, snap.emaFanOut(), 1e-6);
+    }
+
     private static StageTelemetry.Snapshot snapshotWith(
             double inFill, double outFill, double inWait, double outWait, int activeWorkers) {
         return new StageTelemetry.Snapshot(
                 0L, 0L, 0L, activeWorkers,
                 0.0, 0.0, 0.0, 0.0,
-                inFill, outFill, inWait, outWait);
+                inFill, outFill, inWait, outWait, 1.0, 0.0);
     }
 }

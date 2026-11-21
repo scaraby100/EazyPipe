@@ -41,7 +41,9 @@ public final class StageTelemetry {
             double emaInputFill,
             double emaOutputFill,
             double emaInputWaitRatio,
-            double emaOutputWaitRatio) {
+            double emaOutputWaitRatio,
+            double emaFanOut,
+            double emaRetryRate) {
 
         public double emaServiceMillis() {
             return emaServiceNanos / 1_000_000.0;
@@ -51,6 +53,9 @@ public final class StageTelemetry {
     private final LongAdder completedItems = new LongAdder();
     private final LongAdder errorItems = new LongAdder();
     private final LongAdder serviceTimeNanos = new LongAdder();
+    private final LongAdder inputItems = new LongAdder();
+    private final LongAdder outputItems = new LongAdder();
+    private final LongAdder retryAttempts = new LongAdder();
     private final AtomicInteger activeWorkers = new AtomicInteger();
 
     private long prevCompleted;
@@ -58,8 +63,12 @@ public final class StageTelemetry {
     private long prevServiceNanos;
     private long prevInputWaitNanos;
     private long prevOutputWaitNanos;
+    private long prevInputItems;
+    private long prevOutputItems;
+    private long prevRetryAttempts;
     private boolean initialized;
     private boolean hasLatencySample;
+    private boolean hasFanOutSample;
 
     private double emaServiceNanos;
     private double baselineServiceNanos;
@@ -69,12 +78,29 @@ public final class StageTelemetry {
     private double emaOutputFill;
     private double emaInputWaitRatio;
     private double emaOutputWaitRatio;
-    private volatile Snapshot latestSnapshot = new Snapshot(0, 0, 0, 0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0);
+    private double emaFanOut = 1.0;
+    private double emaRetryRate;
+    private volatile Snapshot latestSnapshot =
+            new Snapshot(0, 0, 0, 0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0);
 
     /**
      * Creates a new empty stage telemetry collector.
      */
     public StageTelemetry() {
+    }
+
+    public void onInput(long count) {
+        if (count > 0) {
+            inputItems.add(count);
+        }
+    }
+
+    public void onOutput() {
+        outputItems.increment();
+    }
+
+    public void onRetry() {
+        retryAttempts.increment();
     }
 
     public void onProcessingStart() {
@@ -111,18 +137,27 @@ public final class StageTelemetry {
         long curCompleted = completedItems.sum();
         long curErrors = errorItems.sum();
         long curServiceNanos = serviceTimeNanos.sum();
+        long curInput = inputItems.sum();
+        long curOutput = outputItems.sum();
+        long curRetries = retryAttempts.sum();
 
         long deltaCompleted = Math.max(0L, curCompleted - prevCompleted);
         long deltaErrors = Math.max(0L, curErrors - prevErrors);
         long deltaService = Math.max(0L, curServiceNanos - prevServiceNanos);
         long deltaInWait = Math.max(0L, totalInputWaitNanos - prevInputWaitNanos);
         long deltaOutWait = Math.max(0L, totalOutputWaitNanos - prevOutputWaitNanos);
+        long deltaIn = Math.max(0L, curInput - prevInputItems);
+        long deltaOut = Math.max(0L, curOutput - prevOutputItems);
+        long deltaRetries = Math.max(0L, curRetries - prevRetryAttempts);
 
         prevCompleted = curCompleted;
         prevErrors = curErrors;
         prevServiceNanos = curServiceNanos;
         prevInputWaitNanos = totalInputWaitNanos;
         prevOutputWaitNanos = totalOutputWaitNanos;
+        prevInputItems = curInput;
+        prevOutputItems = curOutput;
+        prevRetryAttempts = curRetries;
 
         long deltaHandled = deltaCompleted + deltaErrors;
         long effectiveWindow = Math.max(1L, windowNanos);
@@ -142,6 +177,7 @@ public final class StageTelemetry {
             emaInputWaitRatio = instInWaitRatio;
             emaOutputWaitRatio = instOutWaitRatio;
             emaErrorRate = deltaHandled > 0 ? (double) deltaErrors / deltaHandled : 0.0;
+            emaRetryRate = deltaHandled > 0 ? (double) deltaRetries / deltaHandled : 0.0;
         } else {
             emaInputFill = ema(emaAlpha, clampedInFill, emaInputFill);
             emaOutputFill = ema(emaAlpha, clampedOutFill, emaOutputFill);
@@ -150,7 +186,19 @@ public final class StageTelemetry {
             emaOutputWaitRatio = ema(emaAlpha, instOutWaitRatio, emaOutputWaitRatio);
             if (deltaHandled > 0) {
                 double instErrorRate = (double) deltaErrors / deltaHandled;
+                double instRetryRate = (double) deltaRetries / deltaHandled;
                 emaErrorRate = ema(emaAlpha, instErrorRate, emaErrorRate);
+                emaRetryRate = ema(emaAlpha, instRetryRate, emaRetryRate);
+            }
+        }
+
+        if (deltaIn > 0) {
+            double instFanOut = Math.max(1e-3, Math.min(1e4, (double) deltaOut / deltaIn));
+            if (!hasFanOutSample) {
+                hasFanOutSample = true;
+                emaFanOut = instFanOut;
+            } else {
+                emaFanOut = ema(emaAlpha, instFanOut, emaFanOut);
             }
         }
 
@@ -184,7 +232,9 @@ public final class StageTelemetry {
                 emaInputFill,
                 emaOutputFill,
                 emaInputWaitRatio,
-                emaOutputWaitRatio);
+                emaOutputWaitRatio,
+                emaFanOut,
+                emaRetryRate);
         latestSnapshot = snapshot;
         return snapshot;
     }

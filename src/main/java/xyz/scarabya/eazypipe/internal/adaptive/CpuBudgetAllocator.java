@@ -40,7 +40,9 @@ public final class CpuBudgetAllocator {
             int maxConcurrency,
             double emaServiceNanos,
             boolean cooldownReady,
-            boolean persistent) {
+            boolean persistent,
+            double relativeFlow,
+            boolean braked) {
     }
 
     private CpuBudgetAllocator() {
@@ -70,21 +72,26 @@ public final class CpuBudgetAllocator {
 
         for (int i = 0; i < stages.size(); i++) {
             CpuStageView s = stages.get(i);
-            boolean canChange = s.cooldownReady() && s.persistent();
-            if (canChange && (s.state() == StageState.BACKPRESSURED || s.state() == StageState.STARVED)) {
+            boolean effectivePersistent = s.persistent() || s.braked();
+            boolean canChange = s.cooldownReady() && effectivePersistent;
+            if (s.braked() && s.state() == StageState.BOTTLENECK) {
+                allocated[i] = clamp(s.currentConcurrency(), s.minConcurrency(), s.maxConcurrency());
+            } else if (canChange && (s.braked()
+                    || s.state() == StageState.BACKPRESSURED
+                    || s.state() == StageState.STARVED)) {
                 int excess = s.currentConcurrency() - s.minConcurrency();
                 int stepDown = excess > 0 ? Math.max(1, excess / 2) : 0;
                 allocated[i] = Math.max(s.minConcurrency(), s.currentConcurrency() - stepDown);
             } else if (canChange && s.state() == StageState.BOTTLENECK) {
                 allocated[i] = s.minConcurrency();
                 adjustableActive[i] = true;
-                totalActiveService += effectiveWeight(s.emaServiceNanos());
+                totalActiveService += stageWeight(s);
             } else {
                 allocated[i] = clamp(s.currentConcurrency(), s.minConcurrency(), s.maxConcurrency());
                 if (canChange && s.state() == StageState.BALANCED && s.emaServiceNanos() > 0.0) {
                     adjustableActive[i] = true;
                     allocated[i] = s.minConcurrency();
-                    totalActiveService += effectiveWeight(s.emaServiceNanos());
+                    totalActiveService += stageWeight(s);
                 }
             }
         }
@@ -113,7 +120,7 @@ public final class CpuBudgetAllocator {
             for (int i = 0; i < stages.size(); i++) {
                 if (adjustableActive[i]) {
                     CpuStageView s = stages.get(i);
-                    double share = totalPoolForActive * (effectiveWeight(s.emaServiceNanos()) / totalActiveService);
+                    double share = totalPoolForActive * (stageWeight(s) / totalActiveService);
                     ideal[i] = Math.min(s.maxConcurrency(), Math.max(s.minConcurrency(), share));
                     int floorTarget = Math.min(s.maxConcurrency(), (int) Math.floor(ideal[i]));
                     int gain = Math.max(0, Math.min(remaining, floorTarget - allocated[i]));
@@ -160,12 +167,17 @@ public final class CpuBudgetAllocator {
         int[] result = new int[stages.size()];
         for (int i = 0; i < stages.size(); i++) {
             CpuStageView s = stages.get(i);
+            boolean effectivePersistent = s.persistent() || s.braked();
             // Respect cooldown/persistence strictly: frozen stages stay at currentConcurrency.
-            result[i] = (s.cooldownReady() && s.persistent())
+            result[i] = (s.cooldownReady() && effectivePersistent)
                     ? clamp(allocated[i], s.minConcurrency(), s.maxConcurrency())
                     : s.currentConcurrency();
         }
         return result;
+    }
+
+    private static double stageWeight(CpuStageView stage) {
+        return Math.max(1e-3, stage.relativeFlow()) * effectiveWeight(stage.emaServiceNanos());
     }
 
     private static double effectiveWeight(double emaServiceNanos) {

@@ -134,11 +134,11 @@ class AdaptiveControllerTest {
         // Phase 1: stage1 is slow (10ms) BOTTLENECK, stage2 is fast (1ms) STARVED, stage3 fast (1ms) STARVED.
         int[] phase1 = CpuBudgetAllocator.allocate(cpuBudget, List.of(
                 new CpuBudgetAllocator.CpuStageView(
-                        "cpu-1", StageState.BOTTLENECK, 2, 1, 8, 10_000_000.0, true, true),
+                        "cpu-1", StageState.BOTTLENECK, 2, 1, 8, 10_000_000.0, true, true, 1.0, false),
                 new CpuBudgetAllocator.CpuStageView(
-                        "cpu-2", StageState.STARVED, 2, 1, 8, 1_000_000.0, true, true),
+                        "cpu-2", StageState.STARVED, 2, 1, 8, 1_000_000.0, true, true, 1.0, false),
                 new CpuBudgetAllocator.CpuStageView(
-                        "cpu-3", StageState.STARVED, 2, 1, 8, 1_000_000.0, true, true)));
+                        "cpu-3", StageState.STARVED, 2, 1, 8, 1_000_000.0, true, true, 1.0, false)));
 
         assertTrue(phase1[0] >= 5);
         assertEquals(1, phase1[1]);
@@ -148,11 +148,11 @@ class AdaptiveControllerTest {
         // Phase 2: bottleneck shifts to cpu-3 (12ms) while cpu-1 becomes fast (1ms) and BACKPRESSURED.
         int[] phase2Tick1 = CpuBudgetAllocator.allocate(cpuBudget, List.of(
                 new CpuBudgetAllocator.CpuStageView(
-                        "cpu-1", StageState.BACKPRESSURED, phase1[0], 1, 8, 1_000_000.0, true, true),
+                        "cpu-1", StageState.BACKPRESSURED, phase1[0], 1, 8, 1_000_000.0, true, true, 1.0, false),
                 new CpuBudgetAllocator.CpuStageView(
-                        "cpu-2", StageState.BALANCED, 1, 1, 8, 1_000_000.0, true, true),
+                        "cpu-2", StageState.BALANCED, 1, 1, 8, 1_000_000.0, true, true, 1.0, false),
                 new CpuBudgetAllocator.CpuStageView(
-                        "cpu-3", StageState.BOTTLENECK, 1, 1, 8, 12_000_000.0, true, true)));
+                        "cpu-3", StageState.BOTTLENECK, 1, 1, 8, 12_000_000.0, true, true, 1.0, false)));
 
         assertTrue(phase2Tick1[0] < phase1[0]);
         assertTrue(phase2Tick1[2] > 1);
@@ -161,11 +161,11 @@ class AdaptiveControllerTest {
         // Second rebalancing tick completes convergence as cpu-1 continues yielding unused permits.
         int[] phase2Tick2 = CpuBudgetAllocator.allocate(cpuBudget, List.of(
                 new CpuBudgetAllocator.CpuStageView(
-                        "cpu-1", StageState.BACKPRESSURED, phase2Tick1[0], 1, 8, 1_000_000.0, true, true),
+                        "cpu-1", StageState.BACKPRESSURED, phase2Tick1[0], 1, 8, 1_000_000.0, true, true, 1.0, false),
                 new CpuBudgetAllocator.CpuStageView(
-                        "cpu-2", StageState.BALANCED, phase2Tick1[1], 1, 8, 1_000_000.0, true, true),
+                        "cpu-2", StageState.BALANCED, phase2Tick1[1], 1, 8, 1_000_000.0, true, true, 1.0, false),
                 new CpuBudgetAllocator.CpuStageView(
-                        "cpu-3", StageState.BOTTLENECK, phase2Tick1[2], 1, 8, 12_000_000.0, true, true)));
+                        "cpu-3", StageState.BOTTLENECK, phase2Tick1[2], 1, 8, 12_000_000.0, true, true, 1.0, false)));
 
         assertTrue(phase2Tick2[0] < phase2Tick1[0]);
         assertTrue(phase2Tick2[2] >= 4);
@@ -176,9 +176,9 @@ class AdaptiveControllerTest {
     void duplicateStageNamesReceiveIndependentCpuTargetsByPosition() {
         int[] targets = CpuBudgetAllocator.allocate(6, List.of(
                 new CpuBudgetAllocator.CpuStageView(
-                        "dup", StageState.BOTTLENECK, 2, 1, 6, 10_000_000.0, true, true),
+                        "dup", StageState.BOTTLENECK, 2, 1, 6, 10_000_000.0, true, true, 1.0, false),
                 new CpuBudgetAllocator.CpuStageView(
-                        "dup", StageState.STARVED, 2, 1, 6, 1_000_000.0, true, true)));
+                        "dup", StageState.STARVED, 2, 1, 6, 1_000_000.0, true, true, 1.0, false)));
 
         assertEquals(2, targets.length);
         assertEquals(5, targets[0], "BOTTLENECK dup stage should scale up to 5");
@@ -282,7 +282,7 @@ class AdaptiveControllerTest {
         int grown = IoConcurrencyLimiter.computeTarget(
                 new IoConcurrencyLimiter.IoStageView(
                         "remote-api", StageState.BOTTLENECK, 4, 1, 32,
-                        11_000_000.0, 10_000_000.0, 0.0),
+                        11_000_000.0, 10_000_000.0, 0.0, false),
                 tuning);
         assertEquals(5, grown);
 
@@ -290,7 +290,7 @@ class AdaptiveControllerTest {
         int backedOffLatency = IoConcurrencyLimiter.computeTarget(
                 new IoConcurrencyLimiter.IoStageView(
                         "remote-api", StageState.BOTTLENECK, 12, 1, 32,
-                        25_000_000.0, 10_000_000.0, 0.0),
+                        25_000_000.0, 10_000_000.0, 0.0, false),
                 tuning);
         assertEquals(9, backedOffLatency);
 
@@ -298,7 +298,7 @@ class AdaptiveControllerTest {
         int backedOffErrors = IoConcurrencyLimiter.computeTarget(
                 new IoConcurrencyLimiter.IoStageView(
                         "remote-api", StageState.BOTTLENECK, 12, 1, 32,
-                        10_500_000.0, 10_000_000.0, 0.12),
+                        10_500_000.0, 10_000_000.0, 0.12, false),
                 tuning);
         assertEquals(9, backedOffErrors);
     }
@@ -482,5 +482,68 @@ class AdaptiveControllerTest {
         List<ScalingDecision> reductions = controller.tick();
         assertEquals(1, reductions.size());
         assertTrue(target.get() < 10);
+    }
+
+    @Test
+    void cpuBudgetAllocatorWeightsByRelativeFlowAcrossFanOutStages() {
+        int[] targets = CpuBudgetAllocator.allocate(11, List.of(
+                new CpuBudgetAllocator.CpuStageView(
+                        "parse", StageState.BOTTLENECK, 2, 1, 16, 1_000_000.0, true, true, 1.0, false),
+                new CpuBudgetAllocator.CpuStageView(
+                        "chunk-embed", StageState.BOTTLENECK, 2, 1, 16, 1_000_000.0, true, true, 10.0, false)));
+
+        assertEquals(2, targets.length);
+        assertTrue(targets[0] <= 3, "Expected upstream r=1 stage <= 3, got " + targets[0]);
+        assertTrue(targets[1] >= 8, "Expected downstream r=10 stage >= 8, got " + targets[1]);
+    }
+
+    @Test
+    void downstreamBrakeStepsDownUpstreamStagesInOneTickBypassingPersistence() {
+        MutableClock clock = new MutableClock();
+        StageTelemetry t0 = new StageTelemetry();
+        StageTelemetry t1 = new StageTelemetry();
+        StageTelemetry t2 = new StageTelemetry();
+
+        AtomicInteger target0 = new AtomicInteger(8);
+        AtomicInteger target1 = new AtomicInteger(8);
+        AtomicInteger target2 = new AtomicInteger(8);
+
+        AdaptiveConfig config = AdaptiveConfig.builder()
+                .clock(clock)
+                .tuning(AdaptiveConfig.Tuning.balanced().toBuilder()
+                        .emaAlpha(1.0)
+                        .persistenceTicks(3)
+                        .cooldown(Duration.ZERO)
+                        .build())
+                .build();
+
+        AdaptiveController controller = new AdaptiveController(
+                config,
+                4,
+                List.of(
+                        new AdaptiveController.ManagedStage(
+                                0, true, "io-0", StageKind.IO_BOUND, 1, 16, t0,
+                                true, true, () -> 0.50, () -> 0.90,
+                                () -> 0L, () -> 0L, () -> 0L,
+                                target0::get, target0::set),
+                        new AdaptiveController.ManagedStage(
+                                1, true, "io-1", StageKind.IO_BOUND, 1, 16, t1,
+                                true, true, () -> 0.90, () -> 0.75,
+                                () -> 0L, () -> 0L, () -> 0L,
+                                target1::get, target1::set),
+                        new AdaptiveController.ManagedStage(
+                                2, true, "io-2", StageKind.IO_BOUND, 1, 16, t2,
+                                true, true, () -> 0.75, () -> 0.95,
+                                () -> 0L, () -> 0L, () -> 0L,
+                                target2::get, target2::set)),
+                null);
+
+        controller.tick();
+
+        // Both upstream stages are braked on the VERY FIRST tick despite persistenceTicks=3.
+        assertTrue(target0.get() < 8, "Expected io-0 to step down on tick 1, was " + target0.get());
+        assertTrue(target1.get() < 8, "Expected io-1 to step down on tick 1, was " + target1.get());
+        // Downstream-most stage is not braked and respects persistenceTicks=3.
+        assertEquals(8, target2.get());
     }
 }

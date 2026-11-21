@@ -48,6 +48,7 @@ final class StageWorkerLoops {
                         rt.executionPolicy.sendToChannel(outChannel, wrapped, downstreamName, downstreamPolicy);
                 if (res.status() != BoundedChannel.SendStatus.DROPPED_NEWEST) {
                     rt.itemsProduced.incrementAndGet();
+                    telemetry.onOutput();
                 }
                 long pureNanos = Math.max(0L, (System.nanoTime() - t0) - res.blockedNanos());
                 telemetry.onProcessingSuccess(pureNanos);
@@ -98,6 +99,7 @@ final class StageWorkerLoops {
                     pool.onEof();
                     break;
                 }
+                telemetry.onInput(1);
                 Object payload = ContextSupport.unwrapPayload(raw);
                 long[] blockedNanos = new long[1];
                 if (cpuRouted) {
@@ -117,7 +119,11 @@ final class StageWorkerLoops {
                             });
                     if (outcome == StageExecutionPolicy.ItemOutcome.SUCCESS) {
                         for (Object wrappedOut : bufferedEmissions) {
-                            rt.executionPolicy.sendToChannel(outChannel, wrappedOut, downstreamName, downstreamPolicy);
+                            BoundedChannel.SendResult res = rt.executionPolicy.sendToChannel(
+                                    outChannel, wrappedOut, downstreamName, downstreamPolicy);
+                            if (res.status() != BoundedChannel.SendStatus.DROPPED_NEWEST) {
+                                telemetry.onOutput();
+                            }
                         }
                     }
                 } else {
@@ -125,6 +131,9 @@ final class StageWorkerLoops {
                         Object wrappedOut = rt.context.wrapWithCurrentContext(outItem);
                         BoundedChannel.SendResult res = rt.executionPolicy.sendToChannel(
                                 outChannel, wrappedOut, downstreamName, downstreamPolicy);
+                        if (res.status() != BoundedChannel.SendStatus.DROPPED_NEWEST) {
+                            telemetry.onOutput();
+                        }
                         blockedNanos[0] += res.blockedNanos();
                     };
                     rt.executionPolicy.executeWithTelemetry(
@@ -168,6 +177,7 @@ final class StageWorkerLoops {
                     pool.onEof();
                     break;
                 }
+                telemetry.onInput(1);
                 Object raw = seqItem.item();
                 Object payload = ContextSupport.unwrapPayload(raw);
                 Object[] resultHolder = new Object[1];
@@ -189,8 +199,13 @@ final class StageWorkerLoops {
                 Object toSubmit = outcome == StageExecutionPolicy.ItemOutcome.SUCCESS
                         ? resultHolder[0]
                         : OrderedReorderBuffer.TOMBSTONE;
-                reorderBuffer.complete(seqItem.sequence(), toSubmit, wrappedOut ->
-                        rt.executionPolicy.sendToChannel(outChannel, wrappedOut, downstreamName, downstreamPolicy));
+                reorderBuffer.complete(seqItem.sequence(), toSubmit, wrappedOut -> {
+                    BoundedChannel.SendResult res = rt.executionPolicy.sendToChannel(
+                            outChannel, wrappedOut, downstreamName, downstreamPolicy);
+                    if (res.status() != BoundedChannel.SendStatus.DROPPED_NEWEST) {
+                        telemetry.onOutput();
+                    }
+                });
             } finally {
                 pool.release();
             }
@@ -219,6 +234,7 @@ final class StageWorkerLoops {
                     pool.onEof();
                     break;
                 }
+                telemetry.onInput(rawBatch.size());
                 telemetry.onProcessingStart();
                 long t0 = System.nanoTime();
                 try {
@@ -229,6 +245,9 @@ final class StageWorkerLoops {
                     Object wrappedBatch = rt.context.wrapWithCurrentContext(List.copyOf(payloads));
                     BoundedChannel.SendResult res = rt.executionPolicy.sendToChannel(
                             outChannel, wrappedBatch, downstreamName, downstreamPolicy);
+                    if (res.status() != BoundedChannel.SendStatus.DROPPED_NEWEST) {
+                        telemetry.onOutput();
+                    }
                     telemetry.onProcessingSuccess(Math.max(0L, (System.nanoTime() - t0) - res.blockedNanos()));
                 } catch (PipeAbortedException | InterruptedException ex) {
                     telemetry.onProcessingAborted();
@@ -264,12 +283,16 @@ final class StageWorkerLoops {
                     pool.onEof();
                     break;
                 }
+                telemetry.onInput(1);
                 telemetry.onProcessingStart();
                 long t0 = System.nanoTime();
                 try {
                     limiter.acquire();
                     BoundedChannel.SendResult res = rt.executionPolicy.sendToChannel(
                             outChannel, raw, downstreamName, downstreamPolicy);
+                    if (res.status() != BoundedChannel.SendStatus.DROPPED_NEWEST) {
+                        telemetry.onOutput();
+                    }
                     telemetry.onProcessingSuccess(Math.max(0L, (System.nanoTime() - t0) - res.blockedNanos()));
                 } catch (PipeAbortedException | InterruptedException ex) {
                     telemetry.onProcessingAborted();
@@ -309,6 +332,7 @@ final class StageWorkerLoops {
                     pool.onEof();
                     break;
                 }
+                telemetry.onInput(1);
                 telemetry.onProcessingStart();
                 long t0 = System.nanoTime();
                 try {
@@ -316,6 +340,9 @@ final class StageWorkerLoops {
                             rt.executionPolicy.sendToChannel(sideChannel, raw, sideName, sidePolicy);
                     BoundedChannel.SendResult mainRes =
                             rt.executionPolicy.sendToChannel(outChannel, raw, downstreamName, downstreamPolicy);
+                    if (mainRes.status() != BoundedChannel.SendStatus.DROPPED_NEWEST) {
+                        telemetry.onOutput();
+                    }
                     long blocked = sideRes.blockedNanos() + mainRes.blockedNanos();
                     telemetry.onProcessingSuccess(Math.max(0L, (System.nanoTime() - t0) - blocked));
                 } catch (PipeAbortedException | InterruptedException ex) {

@@ -52,6 +52,7 @@ final class TerminalWorkerLoops {
                     pool.onEof();
                     break;
                 }
+                telemetry.onInput(1);
                 Object payload = ContextSupport.unwrapPayload(raw);
                 StageExecutionPolicy.ItemOutcome outcome = rt.executionPolicy.executeWithTelemetry(
                         stageName,
@@ -86,6 +87,7 @@ final class TerminalWorkerLoops {
             if (raw == null) {
                 break;
             }
+            telemetry.onInput(1);
             telemetry.onProcessingStart();
             long t0 = System.nanoTime();
             long blocked = 0L;
@@ -154,6 +156,7 @@ final class TerminalWorkerLoops {
                     pool.onEof();
                     break;
                 }
+                telemetry.onInput(1);
                 Object payload = ContextSupport.unwrapPayload(raw);
                 StageExecutionPolicy.ItemOutcome outcome = rt.executionPolicy.executeWithTelemetry(
                         stageName,
@@ -199,6 +202,7 @@ final class TerminalWorkerLoops {
             if (received == null) {
                 break;
             }
+            telemetry.onInput(1);
             BroadcastItem broadcastItem = received instanceof BroadcastItem bi ? bi : null;
             Object raw = broadcastItem != null ? broadcastItem.raw() : received;
             Object payload = ContextSupport.unwrapPayload(raw);
