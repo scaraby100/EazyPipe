@@ -20,7 +20,7 @@ import java.util.Objects;
 import xyz.scarabya.eazypipe.StageKind;
 
 /**
- * Immutable event emitted whenever {@link AdaptiveController} changes a stage's concurrency target.
+ * Immutable event emitted whenever the adaptive controller changes a stage's concurrency target.
  *
  * @param timestamp instant when the decision was applied
  * @param stageName name of the adjusted stage

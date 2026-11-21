@@ -13,10 +13,11 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-package xyz.scarabya.eazypipe.adaptive;
+package xyz.scarabya.eazypipe.internal.adaptive;
 
 import java.util.ArrayList;
 import java.util.List;
+import xyz.scarabya.eazypipe.adaptive.StageState;
 
 /**
  * Downstream-aware global permit allocator for {@code CPU_BOUND} stages sharing a finite CPU budget.

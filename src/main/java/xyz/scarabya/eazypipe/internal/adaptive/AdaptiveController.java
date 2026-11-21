@@ -13,7 +13,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-package xyz.scarabya.eazypipe.adaptive;
+package xyz.scarabya.eazypipe.internal.adaptive;
 
 import java.time.Duration;
 import java.time.Instant;
@@ -29,6 +29,9 @@ import java.util.function.IntConsumer;
 import java.util.function.IntSupplier;
 import java.util.function.LongSupplier;
 import xyz.scarabya.eazypipe.StageKind;
+import xyz.scarabya.eazypipe.adaptive.AdaptiveConfig;
+import xyz.scarabya.eazypipe.adaptive.ScalingDecision;
+import xyz.scarabya.eazypipe.adaptive.StageState;
 import xyz.scarabya.eazypipe.metrics.PipelineMetricsListener;
 import xyz.scarabya.eazypipe.metrics.StageMetricsSnapshot;
 

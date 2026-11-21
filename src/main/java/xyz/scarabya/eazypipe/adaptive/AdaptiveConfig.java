@@ -21,7 +21,7 @@ import java.util.Objects;
 import java.util.function.Consumer;
 
 /**
- * Configuration for the downstream-aware {@link AdaptiveController}.
+ * Configuration for the downstream-aware adaptive concurrency controller.
  *
  * @param enabled whether adaptive concurrency control is active
  * @param tickInterval sampling and control loop interval (must be positive)

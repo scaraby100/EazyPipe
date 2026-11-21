@@ -24,8 +24,8 @@ import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.atomic.AtomicReference;
-import xyz.scarabya.eazypipe.adaptive.AdaptiveController;
-import xyz.scarabya.eazypipe.adaptive.StageTelemetry;
+import xyz.scarabya.eazypipe.internal.adaptive.AdaptiveController;
+import xyz.scarabya.eazypipe.internal.adaptive.StageTelemetry;
 import xyz.scarabya.eazypipe.metrics.PipelineMetricsListener;
 import xyz.scarabya.eazypipe.metrics.PipelineMetricsSnapshot;
 

@@ -18,7 +18,7 @@ package xyz.scarabya.eazypipe;
 import java.time.Duration;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.function.BiConsumer;
-import xyz.scarabya.eazypipe.adaptive.StageTelemetry;
+import xyz.scarabya.eazypipe.internal.adaptive.StageTelemetry;
 import xyz.scarabya.eazypipe.metrics.PipelineMetricsListener;
 
 /**

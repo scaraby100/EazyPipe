@@ -18,8 +18,8 @@ package xyz.scarabya.eazypipe;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.atomic.AtomicInteger;
-import xyz.scarabya.eazypipe.adaptive.AdaptiveController;
-import xyz.scarabya.eazypipe.adaptive.StageTelemetry;
+import xyz.scarabya.eazypipe.internal.adaptive.AdaptiveController;
+import xyz.scarabya.eazypipe.internal.adaptive.StageTelemetry;
 
 /**
  * Per-stage worker planning helper extracting task creation and auxiliary branch descriptors.

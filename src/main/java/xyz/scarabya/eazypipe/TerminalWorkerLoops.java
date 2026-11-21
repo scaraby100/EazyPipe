@@ -19,7 +19,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
-import xyz.scarabya.eazypipe.adaptive.StageTelemetry;
+import xyz.scarabya.eazypipe.internal.adaptive.StageTelemetry;
 
 /**
  * Worker execution loops for terminal sink, broadcast, routing, and auxiliary branch stages.

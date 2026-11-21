@@ -18,7 +18,7 @@ package xyz.scarabya.eazypipe;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Objects;
-import xyz.scarabya.eazypipe.adaptive.StageTelemetry;
+import xyz.scarabya.eazypipe.internal.adaptive.StageTelemetry;
 
 /**
  * Worker execution loops for source and intermediate pipeline stages.

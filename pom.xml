@@ -67,7 +67,7 @@
                 <artifactId>maven-surefire-plugin</artifactId>
                 <version>3.6.1</version>
                 <configuration>
-                    <argLine>--add-opens xyz.scarabya.eazypipe/xyz.scarabya.eazypipe=ALL-UNNAMED --add-opens xyz.scarabya.eazypipe/xyz.scarabya.eazypipe.adaptive=ALL-UNNAMED --add-opens xyz.scarabya.eazypipe/xyz.scarabya.eazypipe.metrics=ALL-UNNAMED --add-reads xyz.scarabya.eazypipe=ALL-UNNAMED</argLine>
+                    <argLine>--add-opens xyz.scarabya.eazypipe/xyz.scarabya.eazypipe=ALL-UNNAMED --add-opens xyz.scarabya.eazypipe/xyz.scarabya.eazypipe.adaptive=ALL-UNNAMED --add-opens xyz.scarabya.eazypipe/xyz.scarabya.eazypipe.internal.adaptive=ALL-UNNAMED --add-opens xyz.scarabya.eazypipe/xyz.scarabya.eazypipe.metrics=ALL-UNNAMED --add-reads xyz.scarabya.eazypipe=ALL-UNNAMED</argLine>
                 </configuration>
             </plugin>
         </plugins>

@@ -13,7 +13,10 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-package xyz.scarabya.eazypipe.adaptive;
+package xyz.scarabya.eazypipe.internal.adaptive;
+
+import xyz.scarabya.eazypipe.adaptive.AdaptiveConfig;
+import xyz.scarabya.eazypipe.adaptive.StageState;
 
 /**
  * AIMD / Vegas concurrency controller for {@code IO_BOUND} stages running on Java 21 virtual threads.

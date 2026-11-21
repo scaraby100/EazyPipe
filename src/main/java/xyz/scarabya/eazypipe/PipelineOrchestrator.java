@@ -21,8 +21,8 @@ import java.util.concurrent.Future;
 import java.util.concurrent.RejectedExecutionException;
 import java.util.concurrent.ThreadPoolExecutor;
 import java.util.concurrent.atomic.AtomicInteger;
-import xyz.scarabya.eazypipe.adaptive.AdaptiveController;
-import xyz.scarabya.eazypipe.adaptive.StageTelemetry;
+import xyz.scarabya.eazypipe.internal.adaptive.AdaptiveController;
+import xyz.scarabya.eazypipe.internal.adaptive.StageTelemetry;
 import xyz.scarabya.eazypipe.metrics.PipelineMetricsListener;
 
 /**

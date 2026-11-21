@@ -13,7 +13,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-package xyz.scarabya.eazypipe.adaptive;
+package xyz.scarabya.eazypipe.internal.adaptive;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
@@ -35,6 +35,9 @@ import xyz.scarabya.eazypipe.PipeConfig;
 import xyz.scarabya.eazypipe.PipeExecution;
 import xyz.scarabya.eazypipe.StageConfig;
 import xyz.scarabya.eazypipe.StageKind;
+import xyz.scarabya.eazypipe.adaptive.AdaptiveConfig;
+import xyz.scarabya.eazypipe.adaptive.ScalingDecision;
+import xyz.scarabya.eazypipe.adaptive.StageState;
 
 class AdaptiveControllerTest {
 
