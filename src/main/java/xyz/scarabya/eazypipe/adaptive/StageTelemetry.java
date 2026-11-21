@@ -102,7 +102,9 @@ public final class StageTelemetry {
             double rawOutputFill,
             long totalInputWaitNanos,
             long totalOutputWaitNanos,
-            long totalDropped) {
+            long totalDropped,
+            int concurrency,
+            double baselineDecay) {
 
         long curCompleted = completedItems.sum();
         long curErrors = errorItems.sum();
@@ -122,10 +124,11 @@ public final class StageTelemetry {
 
         long deltaHandled = deltaCompleted + deltaErrors;
         long effectiveWindow = Math.max(1L, windowNanos);
+        double waitDenominator = (double) effectiveWindow * Math.max(1, concurrency);
 
         double instThroughput = (deltaCompleted * 1_000_000_000.0) / effectiveWindow;
-        double instInWaitRatio = Math.min(1.0, (double) deltaInWait / effectiveWindow);
-        double instOutWaitRatio = Math.min(1.0, (double) deltaOutWait / effectiveWindow);
+        double instInWaitRatio = Math.min(1.0, (double) deltaInWait / waitDenominator);
+        double instOutWaitRatio = Math.min(1.0, (double) deltaOutWait / waitDenominator);
         double clampedInFill = clamp01(rawInputFill);
         double clampedOutFill = clamp01(rawOutputFill);
 
@@ -158,9 +161,11 @@ public final class StageTelemetry {
             } else {
                 emaServiceNanos = ema(emaAlpha, avgService, emaServiceNanos);
                 if (avgService > 0.0) {
-                    baselineServiceNanos = baselineServiceNanos == 0.0
-                            ? avgService
-                            : Math.min(baselineServiceNanos, avgService);
+                    if (baselineServiceNanos == 0.0 || avgService < baselineServiceNanos) {
+                        baselineServiceNanos = avgService;
+                    } else {
+                        baselineServiceNanos += clamp01(baselineDecay) * (avgService - baselineServiceNanos);
+                    }
                 }
             }
         }

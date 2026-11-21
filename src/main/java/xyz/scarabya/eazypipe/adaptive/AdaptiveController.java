@@ -40,6 +40,7 @@ import xyz.scarabya.eazypipe.metrics.StageMetricsSnapshot;
 public final class AdaptiveController {
 
     private static final int MAX_DECISION_HISTORY = 256;
+    private static final double DEFAULT_BASELINE_DECAY = 0.01;
 
     /**
      * Public registration descriptor connecting a stage's telemetry and channel metrics to its permit target applier.
@@ -175,7 +176,9 @@ public final class AdaptiveController {
                         d.outputFillSupplier().getAsDouble(),
                         d.inputWaitNanosSupplier().getAsLong(),
                         d.outputWaitNanosSupplier().getAsLong(),
-                        d.droppedCountSupplier().getAsLong());
+                        d.droppedCountSupplier().getAsLong(),
+                        d.currentTargetSupplier().getAsInt(),
+                        DEFAULT_BASELINE_DECAY);
                 rs.lastSnapshot = snap;
                 StageState classified = d.telemetry().classify(snap, config, d.hasInput(), d.hasOutput());
                 states[i] = classified;
