@@ -16,9 +16,7 @@
 package xyz.scarabya.eazypipe.adaptive;
 
 import java.util.ArrayList;
-import java.util.LinkedHashMap;
 import java.util.List;
-import java.util.Map;
 
 /**
  * Downstream-aware global permit allocator for {@code CPU_BOUND} stages sharing a finite CPU budget.
@@ -52,12 +50,11 @@ public final class CpuBudgetAllocator {
      *
      * @param cpuBudget global CPU permit budget
      * @param stages CPU-bound stage views in pipeline order
-     * @return map of stage name to computed concurrency target
+     * @return array of computed concurrency targets aligned with {@code stages}
      */
-    public static Map<String, Integer> allocate(int cpuBudget, List<CpuStageView> stages) {
-        Map<String, Integer> result = new LinkedHashMap<>();
+    public static int[] allocate(int cpuBudget, List<CpuStageView> stages) {
         if (stages.isEmpty()) {
-            return result;
+            return new int[0];
         }
 
         int minSum = 0;
@@ -159,13 +156,13 @@ public final class CpuBudgetAllocator {
             }
         }
 
+        int[] result = new int[stages.size()];
         for (int i = 0; i < stages.size(); i++) {
             CpuStageView s = stages.get(i);
             // Respect cooldown/persistence strictly: frozen stages stay at currentConcurrency.
-            int finalTarget = (s.cooldownReady() && s.persistent())
+            result[i] = (s.cooldownReady() && s.persistent())
                     ? clamp(allocated[i], s.minConcurrency(), s.maxConcurrency())
                     : s.currentConcurrency();
-            result.put(s.stageName(), finalTarget);
         }
         return result;
     }

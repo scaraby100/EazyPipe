@@ -20,7 +20,6 @@ import java.time.Instant;
 import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.List;
-import java.util.Map;
 import java.util.Objects;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
@@ -254,12 +253,12 @@ public final class AdaptiveController {
             }
 
             if (!cpuViews.isEmpty()) {
-                Map<String, Integer> targets = CpuBudgetAllocator.allocate(config.cpuBudget(), cpuViews);
+                int[] targets = CpuBudgetAllocator.allocate(config.cpuBudget(), cpuViews);
                 for (int i = cpuStages.size() - 1; i >= 0; i--) {
                     StageRuntimeState rs = cpuStages.get(i);
                     ManagedStage d = rs.descriptor;
                     int current = d.currentTargetSupplier().getAsInt();
-                    int next = targets.getOrDefault(d.stageName(), current);
+                    int next = targets[i];
                     if (next != current && d.minConcurrency() < d.maxConcurrency()) {
                         emitted.add(applyChange(
                                 rs,

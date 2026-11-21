@@ -24,8 +24,8 @@ import java.time.Duration;
 import java.time.Instant;
 import java.time.ZoneId;
 import java.time.ZoneOffset;
+import java.util.Arrays;
 import java.util.List;
-import java.util.Map;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
@@ -123,7 +123,7 @@ class AdaptiveControllerTest {
         int cpuBudget = 8;
 
         // Phase 1: stage1 is slow (10ms) BOTTLENECK, stage2 is fast (1ms) STARVED, stage3 fast (1ms) STARVED.
-        Map<String, Integer> phase1 = CpuBudgetAllocator.allocate(cpuBudget, List.of(
+        int[] phase1 = CpuBudgetAllocator.allocate(cpuBudget, List.of(
                 new CpuBudgetAllocator.CpuStageView(
                         "cpu-1", StageState.BOTTLENECK, 2, 1, 8, 10_000_000.0, true, true),
                 new CpuBudgetAllocator.CpuStageView(
@@ -131,36 +131,89 @@ class AdaptiveControllerTest {
                 new CpuBudgetAllocator.CpuStageView(
                         "cpu-3", StageState.STARVED, 2, 1, 8, 1_000_000.0, true, true)));
 
-        assertTrue(phase1.get("cpu-1") >= 5);
-        assertEquals(1, phase1.get("cpu-2"));
-        assertEquals(1, phase1.get("cpu-3"));
-        assertTrue(phase1.values().stream().mapToInt(Integer::intValue).sum() <= cpuBudget);
+        assertTrue(phase1[0] >= 5);
+        assertEquals(1, phase1[1]);
+        assertEquals(1, phase1[2]);
+        assertTrue(Arrays.stream(phase1).sum() <= cpuBudget);
 
         // Phase 2: bottleneck shifts to cpu-3 (12ms) while cpu-1 becomes fast (1ms) and BACKPRESSURED.
-        Map<String, Integer> phase2Tick1 = CpuBudgetAllocator.allocate(cpuBudget, List.of(
+        int[] phase2Tick1 = CpuBudgetAllocator.allocate(cpuBudget, List.of(
                 new CpuBudgetAllocator.CpuStageView(
-                        "cpu-1", StageState.BACKPRESSURED, phase1.get("cpu-1"), 1, 8, 1_000_000.0, true, true),
+                        "cpu-1", StageState.BACKPRESSURED, phase1[0], 1, 8, 1_000_000.0, true, true),
                 new CpuBudgetAllocator.CpuStageView(
                         "cpu-2", StageState.BALANCED, 1, 1, 8, 1_000_000.0, true, true),
                 new CpuBudgetAllocator.CpuStageView(
                         "cpu-3", StageState.BOTTLENECK, 1, 1, 8, 12_000_000.0, true, true)));
 
-        assertTrue(phase2Tick1.get("cpu-1") < phase1.get("cpu-1"));
-        assertTrue(phase2Tick1.get("cpu-3") > 1);
-        assertTrue(phase2Tick1.values().stream().mapToInt(Integer::intValue).sum() <= cpuBudget);
+        assertTrue(phase2Tick1[0] < phase1[0]);
+        assertTrue(phase2Tick1[2] > 1);
+        assertTrue(Arrays.stream(phase2Tick1).sum() <= cpuBudget);
 
         // Second rebalancing tick completes convergence as cpu-1 continues yielding unused permits.
-        Map<String, Integer> phase2Tick2 = CpuBudgetAllocator.allocate(cpuBudget, List.of(
+        int[] phase2Tick2 = CpuBudgetAllocator.allocate(cpuBudget, List.of(
                 new CpuBudgetAllocator.CpuStageView(
-                        "cpu-1", StageState.BACKPRESSURED, phase2Tick1.get("cpu-1"), 1, 8, 1_000_000.0, true, true),
+                        "cpu-1", StageState.BACKPRESSURED, phase2Tick1[0], 1, 8, 1_000_000.0, true, true),
                 new CpuBudgetAllocator.CpuStageView(
-                        "cpu-2", StageState.BALANCED, phase2Tick1.get("cpu-2"), 1, 8, 1_000_000.0, true, true),
+                        "cpu-2", StageState.BALANCED, phase2Tick1[1], 1, 8, 1_000_000.0, true, true),
                 new CpuBudgetAllocator.CpuStageView(
-                        "cpu-3", StageState.BOTTLENECK, phase2Tick1.get("cpu-3"), 1, 8, 12_000_000.0, true, true)));
+                        "cpu-3", StageState.BOTTLENECK, phase2Tick1[2], 1, 8, 12_000_000.0, true, true)));
 
-        assertTrue(phase2Tick2.get("cpu-1") < phase2Tick1.get("cpu-1"));
-        assertTrue(phase2Tick2.get("cpu-3") >= 4);
-        assertTrue(phase2Tick2.values().stream().mapToInt(Integer::intValue).sum() <= cpuBudget);
+        assertTrue(phase2Tick2[0] < phase2Tick1[0]);
+        assertTrue(phase2Tick2[2] >= 4);
+        assertTrue(Arrays.stream(phase2Tick2).sum() <= cpuBudget);
+    }
+
+    @Test
+    void duplicateStageNamesReceiveIndependentCpuTargetsByPosition() {
+        int[] targets = CpuBudgetAllocator.allocate(6, List.of(
+                new CpuBudgetAllocator.CpuStageView(
+                        "dup", StageState.BOTTLENECK, 2, 1, 6, 10_000_000.0, true, true),
+                new CpuBudgetAllocator.CpuStageView(
+                        "dup", StageState.STARVED, 2, 1, 6, 1_000_000.0, true, true)));
+
+        assertEquals(2, targets.length);
+        assertEquals(5, targets[0], "BOTTLENECK dup stage should scale up to 5");
+        assertEquals(1, targets[1], "STARVED dup stage should step down to 1");
+        assertTrue(Arrays.stream(targets).sum() <= 6);
+
+        MutableClock clock = new MutableClock();
+        StageTelemetry t1 = new StageTelemetry();
+        StageTelemetry t2 = new StageTelemetry();
+        AtomicInteger target1 = new AtomicInteger(2);
+        AtomicInteger target2 = new AtomicInteger(2);
+
+        AdaptiveConfig config = AdaptiveConfig.builder()
+                .clock(clock)
+                .cpuBudget(6)
+                .emaAlpha(1.0)
+                .persistenceTicks(1)
+                .cooldown(Duration.ZERO)
+                .build();
+
+        AdaptiveController controller = new AdaptiveController(
+                config,
+                List.of(
+                        new AdaptiveController.ManagedStage(
+                                "dup", StageKind.CPU_BOUND, 1, 6, t1,
+                                true, true, () -> 0.90, () -> 0.10,
+                                () -> 0L, () -> 0L, () -> 0L,
+                                target1::get, target1::set),
+                        new AdaptiveController.ManagedStage(
+                                "dup", StageKind.CPU_BOUND, 1, 6, t2,
+                                true, true, () -> 0.05, () -> 0.10,
+                                () -> 100_000_000L, () -> 0L, () -> 0L,
+                                target2::get, target2::set)),
+                null);
+
+        t1.onProcessingStart();
+        t1.onProcessingSuccess(10_000_000L);
+        t2.onProcessingStart();
+        t2.onProcessingSuccess(1_000_000L);
+
+        List<ScalingDecision> decisions = controller.tick();
+        assertEquals(2, decisions.size());
+        assertEquals(5, target1.get());
+        assertEquals(1, target2.get());
     }
 
     @Test
