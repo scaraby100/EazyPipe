@@ -15,6 +15,7 @@
  */
 package xyz.scarabya.eazypipe.internal.adaptive;
 
+import java.util.Arrays;
 import xyz.scarabya.eazypipe.StageKind;
 import xyz.scarabya.eazypipe.adaptive.AdaptiveConfig;
 import xyz.scarabya.eazypipe.adaptive.StageState;
@@ -25,7 +26,77 @@ import xyz.scarabya.eazypipe.adaptive.StageState;
  */
 final class TopologyAnalyzer {
 
+    record Analysis(
+            double[] relativeFlows,
+            boolean[] braked,
+            StageState[] downstreamStates,
+            String dominantBottleneck) {
+    }
+
     private TopologyAnalyzer() {
+    }
+
+    static Analysis analyze(
+            String[] stageNames,
+            int[] stageIndices,
+            StageKind[] kinds,
+            boolean[] hasOutput,
+            StageState[] states,
+            StageTelemetry.Snapshot[] snapshots,
+            int[] targets,
+            AdaptiveConfig.Tuning tuning) {
+        int total = stageNames.length;
+        int mainCount = 0;
+        for (int idx : stageIndices) {
+            if (idx >= 0) {
+                mainCount++;
+            }
+        }
+        int[] mainPos = new int[mainCount];
+        double[] mainFanOuts = new double[mainCount];
+        StageState[] mainStates = new StageState[mainCount];
+        StageKind[] mainKinds = new StageKind[mainCount];
+        boolean[] mainHasOut = new boolean[mainCount];
+        double[] mainOutFills = new double[mainCount];
+        double[] mainSvc = new double[mainCount];
+        double[] mainBaseSvc = new double[mainCount];
+        double[] mainRetry = new double[mainCount];
+        int[] mainTargets = new int[mainCount];
+
+        int k = 0;
+        for (int i = 0; i < total; i++) {
+            if (stageIndices[i] >= 0) {
+                mainPos[k] = i;
+                mainFanOuts[k] = snapshots[i].emaFanOut();
+                mainStates[k] = states[i];
+                mainKinds[k] = kinds[i];
+                mainHasOut[k] = hasOutput[i];
+                mainOutFills[k] = snapshots[i].emaOutputFill();
+                mainSvc[k] = snapshots[i].emaServiceNanos();
+                mainBaseSvc[k] = snapshots[i].baselineServiceNanos();
+                mainRetry[k] = snapshots[i].emaRetryRate();
+                mainTargets[k] = targets[i];
+                k++;
+            }
+        }
+
+        double[] mainFlows = relativeFlows(mainFanOuts);
+        boolean[] mainBraked = braked(
+                mainStates, mainKinds, mainHasOut, mainOutFills, mainSvc, mainBaseSvc, mainRetry, tuning);
+        int domMainIdx = dominantBottleneck(mainFlows, mainSvc, mainTargets);
+        String dominantName = domMainIdx >= 0 ? stageNames[mainPos[domMainIdx]] : "";
+
+        double[] relativeFlows = new double[total];
+        Arrays.fill(relativeFlows, Double.NaN);
+        boolean[] braked = new boolean[total];
+        StageState[] downstreamStates = new StageState[total];
+        for (int m = 0; m < mainCount; m++) {
+            int pos = mainPos[m];
+            relativeFlows[pos] = mainFlows[m];
+            braked[pos] = mainBraked[m];
+            downstreamStates[pos] = (m + 1 < mainCount) ? mainStates[m + 1] : null;
+        }
+        return new Analysis(relativeFlows, braked, downstreamStates, dominantName);
     }
 
     static double[] relativeFlows(double[] fanOuts) {

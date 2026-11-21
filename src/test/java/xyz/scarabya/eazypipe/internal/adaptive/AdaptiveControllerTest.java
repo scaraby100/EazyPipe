@@ -39,6 +39,8 @@ import xyz.scarabya.eazypipe.StageKind;
 import xyz.scarabya.eazypipe.adaptive.AdaptiveConfig;
 import xyz.scarabya.eazypipe.adaptive.ScalingDecision;
 import xyz.scarabya.eazypipe.adaptive.StageState;
+import xyz.scarabya.eazypipe.metrics.PipelineMetricsSnapshot;
+import xyz.scarabya.eazypipe.metrics.StageMetricsSnapshot;
 
 class AdaptiveControllerTest {
 
@@ -589,5 +591,58 @@ class AdaptiveControllerTest {
         assertTrue(target1.get() < 8, "Expected io-1 to step down on tick 1, was " + target1.get());
         // Downstream-most stage is not braked and respects persistenceTicks=3.
         assertEquals(8, target2.get());
+    }
+
+    @Test
+    void scalingDecisionExplainAndSnapshotSummaryFormatReadableDiagnostics() {
+        ScalingDecision decision = new ScalingDecision(
+                Instant.parse("2026-01-01T00:00:00Z"),
+                "slow-io",
+                1,
+                StageKind.IO_BOUND,
+                StageState.BOTTLENECK,
+                2,
+                3,
+                "IO AIMD/Vegas: BOTTLENECK",
+                0.85,
+                0.15,
+                12.5,
+                1.12,
+                1.0,
+                "slow-io",
+                StageState.BALANCED);
+
+        String explained = decision.explain();
+        assertTrue(explained.contains("slow-io"));
+        assertTrue(explained.contains("BOTTLENECK"));
+        assertTrue(explained.contains("2->3"));
+
+        List<StageMetricsSnapshot> stages = List.of(
+                new StageMetricsSnapshot(
+                        "source", StageKind.IO_BOUND, StageState.BALANCED,
+                        1, 0, 10, 0, 0, 0.2, 500.0, 0.0, 0.1, 1.0, 1.0),
+                new StageMetricsSnapshot(
+                        "slow-io", StageKind.IO_BOUND, StageState.BOTTLENECK,
+                        3, 2, 10, 0, 0, 12.5, 240.0, 0.85, 0.15, 1.0, 1.0),
+                new StageMetricsSnapshot(
+                        "audit-tee", StageKind.IO_BOUND, StageState.BALANCED,
+                        1, 0, 10, 0, 0, 0.5, 240.0, 0.05, 0.0, Double.NaN, Double.NaN));
+
+        PipelineMetricsSnapshot withoutDecision = new PipelineMetricsSnapshot(
+                Duration.ofMillis(120), 10, 10, 0, 0, stages, List.of());
+        String summaryNoDec = withoutDecision.summary();
+        String[] linesNoDec = summaryNoDec.split("\n");
+        assertEquals(stages.size() + 1, linesNoDec.length);
+        assertTrue(summaryNoDec.contains("source"));
+        assertTrue(summaryNoDec.contains("slow-io"));
+        assertTrue(summaryNoDec.contains("audit-tee"));
+        assertTrue(summaryNoDec.contains("fanout=- flow=-"));
+
+        PipelineMetricsSnapshot withDecision = new PipelineMetricsSnapshot(
+                Duration.ofMillis(120), 10, 10, 0, 0, stages, List.of(decision));
+        String summaryWithDec = withDecision.summary();
+        String[] linesWithDec = summaryWithDec.split("\n");
+        assertEquals(stages.size() + 2, linesWithDec.length);
+        assertTrue(summaryWithDec.contains("last: " + explained));
     }
 }

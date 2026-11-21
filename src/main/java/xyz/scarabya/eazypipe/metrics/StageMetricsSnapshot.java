@@ -34,6 +34,8 @@ import xyz.scarabya.eazypipe.adaptive.StageState;
  * @param emaThroughputPerSec smoothed throughput in items/second
  * @param inputFillRatio current input channel fill ratio in {@code [0.0, 1.0]}
  * @param outputFillRatio current output channel fill ratio in {@code [0.0, 1.0]}
+ * @param fanOutRatio smoothed output-to-input item ratio ({@code Double.NaN} for auxiliary branches)
+ * @param relativeFlow cumulative fan-out flow multiplier ({@code Double.NaN} for auxiliary branches)
  */
 public record StageMetricsSnapshot(
         String stageName,
@@ -47,7 +49,9 @@ public record StageMetricsSnapshot(
         double emaServiceTimeMillis,
         double emaThroughputPerSec,
         double inputFillRatio,
-        double outputFillRatio) {
+        double outputFillRatio,
+        double fanOutRatio,
+        double relativeFlow) {
 
     public StageMetricsSnapshot {
         Objects.requireNonNull(stageName, "stageName must not be null");
