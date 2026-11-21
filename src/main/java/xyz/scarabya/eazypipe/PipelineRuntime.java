@@ -25,6 +25,7 @@ import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.Future;
 import java.util.concurrent.RejectedExecutionException;
+import java.util.concurrent.ThreadPoolExecutor;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
@@ -53,11 +54,6 @@ final class PipelineRuntime<R> {
     private record ContextEnvelope(Object payload, ContextPropagator.ContextSnapshot snapshot) { }
 
     @FunctionalInterface
-    private interface ThrowingRunnable {
-        void run() throws Exception;
-    }
-
-    @FunctionalInterface
     private interface RuntimeTaskBody {
         void run(PipelineRuntime<?> runtime) throws Exception;
     }
@@ -82,6 +78,7 @@ final class PipelineRuntime<R> {
     private final List<OrderedReorderBuffer> reorderBuffers;
     private final List<TokenBucketRateLimiter> rateLimiters;
     private final StageScheduler scheduler;
+    private final CpuWorkerPool cpuPool;
     private final ContextPropagator contextPropagator;
     private final ContextPropagator.ContextSnapshot launchContext;
     private final PipelineMetricsListener metricsListener;
@@ -119,6 +116,7 @@ final class PipelineRuntime<R> {
             List<OrderedReorderBuffer> reorderBuffers,
             List<TokenBucketRateLimiter> rateLimiters,
             StageScheduler scheduler,
+            CpuWorkerPool cpuPool,
             ContextPropagator contextPropagator,
             ContextPropagator.ContextSnapshot launchContext,
             PipelineMetricsListener metricsListener,
@@ -135,6 +133,7 @@ final class PipelineRuntime<R> {
         this.reorderBuffers = reorderBuffers;
         this.rateLimiters = rateLimiters;
         this.scheduler = scheduler;
+        this.cpuPool = cpuPool;
         this.contextPropagator = contextPropagator;
         this.launchContext = launchContext;
         this.metricsListener = metricsListener;
@@ -220,8 +219,24 @@ final class PipelineRuntime<R> {
                 : PipelineMetricsListener.noop();
         AdaptiveController adaptiveController = new AdaptiveController(
                 config.adaptiveConfig(),
+                config.cpuBudget(),
                 managedStages,
                 listener);
+
+        boolean needsCpuPool = false;
+        for (int i = 1; i < stages.size(); i++) {
+            StageDefinition st = stages.get(i);
+            if (isCpuRouted(st.config(), config.executorMode())) {
+                needsCpuPool = true;
+                break;
+            }
+            if (st instanceof StageDefinition.TeeStage<?> tee
+                    && isCpuRouted(tee.sideConfig(), config.executorMode())) {
+                needsCpuPool = true;
+                break;
+            }
+        }
+        CpuWorkerPool cpuPool = needsCpuPool ? new CpuWorkerPool(config.cpuBudget()) : null;
 
         ContextPropagator propagator = config.contextPropagator();
         ContextPropagator.ContextSnapshot launchCtx = propagator != null ? propagator.capture() : null;
@@ -431,6 +446,7 @@ final class PipelineRuntime<R> {
                 List.copyOf(reorderBuffers),
                 List.copyOf(rateLimiters),
                 scheduler,
+                cpuPool,
                 propagator,
                 launchCtx,
                 listener,
@@ -442,6 +458,25 @@ final class PipelineRuntime<R> {
     }
 
     private void bindAndStart(List<WorkerTask> tasks) {
+        if (config.executorMode() == PipeConfig.ExecutorMode.CUSTOM
+                && config.customExecutor() instanceof ThreadPoolExecutor tpe) {
+            int customTasks = 0;
+            for (WorkerTask task : tasks) {
+                if (task.stageKind == StageKind.INHERIT) {
+                    customTasks++;
+                }
+            }
+            if (tpe.getMaximumPoolSize() < customTasks) {
+                int required = customTasks;
+                int maxPool = tpe.getMaximumPoolSize();
+                System.getLogger("xyz.scarabya.eazypipe").log(
+                        System.Logger.Level.WARNING,
+                        () -> "Custom ThreadPoolExecutor maximumPoolSize (" + maxPool
+                                + ") is smaller than the " + required
+                                + " concurrent INHERIT worker tasks; at least " + required
+                                + " threads are required to avoid starvation deadlock.");
+            }
+        }
         if (config.adaptiveConfig().enabled()) {
             adaptiveController.start();
         }
@@ -461,7 +496,7 @@ final class PipelineRuntime<R> {
                 continue;
             }
             try {
-                Future<?> future = scheduler.submit(task.stageKind, task);
+                Future<?> future = scheduler.submit(task.stageKind, task.isSource, task);
                 boolean shouldCancelNow;
                 synchronized (workersLock) {
                     task.future = future;
@@ -566,20 +601,42 @@ final class PipelineRuntime<R> {
                 }
                 Object payload = unwrapPayload(raw);
                 long[] blockedNanos = new long[1];
-                PipeEmitter<Object> emitter = outItem -> {
-                    Object wrappedOut = wrapWithCurrentContext(outItem);
-                    BoundedChannel.SendResult res =
+                boolean cpuRouted = isCpuRouted(stage.config(), config.executorMode());
+                if (cpuRouted) {
+                    List<Object> bufferedEmissions = new ArrayList<>();
+                    PipeEmitter<Object> emitter = outItem -> bufferedEmissions.add(wrapWithCurrentContext(outItem));
+                    ItemOutcome outcome = executeWithTelemetry(
+                            stageName,
+                            stage.config(),
+                            telemetry,
+                            payload,
+                            blockedNanos,
+                            true,
+                            () -> {
+                                bufferedEmissions.clear();
+                                withContext(raw, () -> processor.process(payload, emitter));
+                            });
+                    if (outcome == ItemOutcome.SUCCESS) {
+                        for (Object wrappedOut : bufferedEmissions) {
                             sendToChannel(outChannel, wrappedOut, downstreamName, downstreamPolicy);
-                    blockedNanos[0] += res.blockedNanos();
-                };
-                executeWithTelemetry(
-                        stageName,
-                        stage.config(),
-                        telemetry,
-                        raw,
-                        payload,
-                        blockedNanos,
-                        () -> withContext(raw, () -> processor.process(payload, emitter)));
+                        }
+                    }
+                } else {
+                    PipeEmitter<Object> emitter = outItem -> {
+                        Object wrappedOut = wrapWithCurrentContext(outItem);
+                        BoundedChannel.SendResult res =
+                                sendToChannel(outChannel, wrappedOut, downstreamName, downstreamPolicy);
+                        blockedNanos[0] += res.blockedNanos();
+                    };
+                    executeWithTelemetry(
+                            stageName,
+                            stage.config(),
+                            telemetry,
+                            payload,
+                            blockedNanos,
+                            false,
+                            () -> withContext(raw, () -> processor.process(payload, emitter)));
+                }
             } finally {
                 pool.release();
             }
@@ -619,9 +676,9 @@ final class PipelineRuntime<R> {
                         stageName,
                         stage.config(),
                         telemetry,
-                        raw,
                         payload,
                         zeroBlocked,
+                        isCpuRouted(stage.config(), config.executorMode()),
                         () -> withContext(raw, () -> {
                             Object mapped = Objects.requireNonNull(
                                     mapper.apply(payload), "Mapper function must not return null");
@@ -804,9 +861,9 @@ final class PipelineRuntime<R> {
                         stageName,
                         stage.config(),
                         telemetry,
-                        raw,
                         payload,
                         zeroBlocked,
+                        isCpuRouted(stage.config(), config.executorMode()),
                         () -> withContext(raw, () -> sink.consume(payload)));
                 if (outcome == ItemOutcome.SUCCESS) {
                     itemsConsumed.incrementAndGet();
@@ -880,9 +937,9 @@ final class PipelineRuntime<R> {
                         stageName,
                         stage.config(),
                         telemetry,
-                        raw,
                         payload,
                         zeroBlocked,
+                        isCpuRouted(stage.config(), config.executorMode()),
                         () -> withContext(raw, () -> {
                             Object key = classifier.apply(payload);
                             Object routed = rawRoutes.get(key);
@@ -923,9 +980,9 @@ final class PipelineRuntime<R> {
                     auxName,
                     auxConfig,
                     dummyTelemetry,
-                    raw,
                     payload,
                     zeroBlocked,
+                    isCpuRouted(auxConfig, config.executorMode()),
                     () -> withContext(raw, () -> sink.consume(payload)));
         }
     }
@@ -951,13 +1008,18 @@ final class PipelineRuntime<R> {
         }
     }
 
+    private static boolean isCpuRouted(StageConfig stageConfig, PipeConfig.ExecutorMode mode) {
+        return stageConfig.resolveEffectiveKind(mode) == StageKind.CPU_BOUND
+                && !(mode == PipeConfig.ExecutorMode.CUSTOM && stageConfig.kind() == StageKind.INHERIT);
+    }
+
     private ItemOutcome executeWithTelemetry(
             String stageName,
             StageConfig stageConfig,
             StageTelemetry telemetry,
-            Object rawItem,
             Object payload,
             long[] blockedNanosHolder,
+            boolean cpuRouted,
             ThrowingRunnable action) throws Exception {
 
         ErrorPolicy policy = resolveErrorPolicy(stageConfig);
@@ -969,7 +1031,12 @@ final class PipelineRuntime<R> {
 
         while (true) {
             try {
-                action.run();
+                if (cpuRouted) {
+                    long queueWaitNanos = cpuPool.execute(action);
+                    blockedNanosHolder[0] += queueWaitNanos;
+                } else {
+                    action.run();
+                }
                 long pureNanos = Math.max(0L, (System.nanoTime() - t0) - blockedNanosHolder[0]);
                 telemetry.onProcessingSuccess(pureNanos);
                 return ItemOutcome.SUCCESS;
@@ -1186,6 +1253,9 @@ final class PipelineRuntime<R> {
                 }
             }
             scheduler.shutdown();
+            if (cpuPool != null) {
+                cpuPool.shutdown();
+            }
             try {
                 metricsListener.onPipelineCompleted(metricsSnapshot());
             } catch (Throwable ignored) {

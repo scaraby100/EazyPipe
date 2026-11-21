@@ -21,7 +21,11 @@ package xyz.scarabya.eazypipe;
 public enum StageKind {
     /** Inherits the global {@link PipeConfig.ExecutorMode}. */
     INHERIT,
-    /** Compute-intensive stage scheduled on platform worker threads under the global CPU budget. */
+    /**
+     * Compute-intensive stage whose items execute on a shared platform-thread pool sized by
+     * {@link PipeConfig#cpuBudget()}. Per-item emissions are buffered until item completion;
+     * for unbounded per-item streaming or fan-out expansions, use {@link #IO_BOUND}.
+     */
     CPU_BOUND,
     /** Blocking or network I/O stage scheduled on Java 21 virtual threads with AIMD/Vegas concurrency control. */
     IO_BOUND

@@ -79,6 +79,7 @@ class AdaptiveControllerTest {
 
         AdaptiveController controller = new AdaptiveController(
                 config,
+                4,
                 List.of(new AdaptiveController.ManagedStage(
                         "io-stage",
                         StageKind.IO_BOUND,
@@ -192,6 +193,7 @@ class AdaptiveControllerTest {
 
         AdaptiveController controller = new AdaptiveController(
                 config,
+                6,
                 List.of(
                         new AdaptiveController.ManagedStage(
                                 "dup", StageKind.CPU_BOUND, 1, 6, t1,
@@ -237,6 +239,7 @@ class AdaptiveControllerTest {
         // Downstream is stalled/backpressured or at external sink saturation (input=0.92, output=0.95).
         AdaptiveController controller = new AdaptiveController(
                 config,
+                6,
                 List.of(
                         new AdaptiveController.ManagedStage(
                                 "upstream-io", StageKind.IO_BOUND, 1, 16, upstreamTelemetry,

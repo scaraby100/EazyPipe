@@ -88,6 +88,7 @@ public final class AdaptiveController {
     }
 
     private final AdaptiveConfig config;
+    private final int cpuBudget;
     private final List<StageRuntimeState> stages;
     private final PipelineMetricsListener metricsListener;
     private final Object tickLock = new Object();
@@ -98,9 +99,14 @@ public final class AdaptiveController {
 
     public AdaptiveController(
             AdaptiveConfig config,
+            int cpuBudget,
             List<ManagedStage> stages,
             PipelineMetricsListener metricsListener) {
         this.config = Objects.requireNonNull(config, "config must not be null");
+        if (cpuBudget < 1) {
+            throw new IllegalArgumentException("cpuBudget must be >= 1, got " + cpuBudget);
+        }
+        this.cpuBudget = cpuBudget;
         Objects.requireNonNull(stages, "stages must not be null");
         this.metricsListener = metricsListener != null ? metricsListener : PipelineMetricsListener.noop();
         List<StageRuntimeState> list = new ArrayList<>(stages.size());
@@ -253,7 +259,7 @@ public final class AdaptiveController {
             }
 
             if (!cpuViews.isEmpty()) {
-                int[] targets = CpuBudgetAllocator.allocate(config.cpuBudget(), cpuViews);
+                int[] targets = CpuBudgetAllocator.allocate(cpuBudget, cpuViews);
                 for (int i = cpuStages.size() - 1; i >= 0; i--) {
                     StageRuntimeState rs = cpuStages.get(i);
                     ManagedStage d = rs.descriptor;

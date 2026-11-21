@@ -25,7 +25,7 @@ import java.util.function.Consumer;
  *
  * @param enabled whether adaptive concurrency control is active
  * @param tickInterval sampling and control loop interval (must be positive)
- * @param cpuBudget total concurrent permit budget shared across all {@code CPU_BOUND} stages ({@code >= 1})
+ * @param cpuBudget optional override for total concurrent permit budget across {@code CPU_BOUND} stages ({@code 0} to inherit from {@code PipeConfig})
  * @param emaAlpha exponential moving average smoothing factor in {@code (0.0, 1.0]}
  * @param ioLatencyAlpha Vegas/AIMD increase ceiling relative to baseline latency ({@code >= 1.0})
  * @param ioLatencyBeta Vegas/AIMD decrease threshold relative to baseline latency ({@code >= ioLatencyAlpha})
@@ -63,8 +63,8 @@ public record AdaptiveConfig(
         if (tickInterval.isZero() || tickInterval.isNegative()) {
             throw new IllegalArgumentException("tickInterval must be positive");
         }
-        if (cpuBudget < 1) {
-            throw new IllegalArgumentException("cpuBudget must be >= 1, got " + cpuBudget);
+        if (cpuBudget < 0) {
+            throw new IllegalArgumentException("cpuBudget must be >= 0, got " + cpuBudget);
         }
         if (Double.isNaN(emaAlpha) || emaAlpha <= 0.0 || emaAlpha > 1.0) {
             throw new IllegalArgumentException("emaAlpha must be in (0.0, 1.0]");
@@ -134,7 +134,7 @@ public record AdaptiveConfig(
 
         private boolean enabled = true;
         private Duration tickInterval = Duration.ofMillis(250);
-        private int cpuBudget = Math.max(1, Runtime.getRuntime().availableProcessors());
+        private int cpuBudget = 0;
         private double emaAlpha = 0.30;
         private double ioLatencyAlpha = 1.25;
         private double ioLatencyBeta = 1.60;
