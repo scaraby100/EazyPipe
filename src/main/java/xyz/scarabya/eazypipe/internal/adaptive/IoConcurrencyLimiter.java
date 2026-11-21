@@ -19,17 +19,14 @@ import xyz.scarabya.eazypipe.adaptive.AdaptiveConfig;
 import xyz.scarabya.eazypipe.adaptive.StageState;
 
 /**
- * AIMD / Vegas concurrency controller for {@code IO_BOUND} stages running on Java 21 virtual threads.
- *
- * <p>Uses baseline service latency as a congestion signal: scales up additively while latency stays
- * within {@code ioLatencyAlpha * baseline} without downstream backpressure, and backs off
- * multiplicatively when tail latency exceeds {@code ioLatencyBeta * baseline}, error rates spike,
- * or the downstream channel saturates.
+ * AIMD / Vegas concurrency controller with retry congestion signals and gradient verification
+ * for {@code IO_BOUND} stages running on Java 21 virtual threads.
  */
 public final class IoConcurrencyLimiter {
 
     private static final double HIGH_ERROR_THRESHOLD = 0.05;
     private static final double HEALTHY_ERROR_THRESHOLD = 0.01;
+    private static final double MIN_THROUGHPUT_GAIN = 1.02;
 
     /**
      * Immutable input snapshot for an {@code IO_BOUND} stage.
@@ -43,7 +40,11 @@ public final class IoConcurrencyLimiter {
             double emaServiceNanos,
             double baselineServiceNanos,
             double emaErrorRate,
-            boolean braked) {
+            double emaRetryRate,
+            boolean braked,
+            double throughputNow,
+            double throughputBeforeLastIncrease,
+            int lastIncreaseStep) {
     }
 
     private IoConcurrencyLimiter() {
@@ -63,10 +64,12 @@ public final class IoConcurrencyLimiter {
 
         boolean latencySaturated = stage.baselineServiceNanos() > 0.0
                 && stage.emaServiceNanos() > tuning.ioLatencyBeta() * stage.baselineServiceNanos();
+        boolean retrySaturated = stage.emaRetryRate() > tuning.retryRateThreshold();
         boolean errorSaturated = stage.emaErrorRate() > HIGH_ERROR_THRESHOLD;
 
         if (stage.state() == StageState.BACKPRESSURED
                 || latencySaturated
+                || retrySaturated
                 || errorSaturated
                 || (stage.braked() && stage.state() != StageState.BOTTLENECK)) {
             int stepDown = Math.max(1, (int) Math.ceil(current * 0.25));
@@ -82,7 +85,14 @@ public final class IoConcurrencyLimiter {
             boolean healthyLatency = stage.baselineServiceNanos() <= 0.0
                     || stage.emaServiceNanos() <= tuning.ioLatencyAlpha() * stage.baselineServiceNanos();
             boolean healthyErrors = stage.emaErrorRate() <= HEALTHY_ERROR_THRESHOLD;
-            if (healthyLatency && healthyErrors) {
+            boolean healthyRetries = stage.emaRetryRate() <= tuning.retryRateThreshold() / 2.0;
+            if (healthyLatency && healthyErrors && healthyRetries) {
+                double thrBefore = stage.throughputBeforeLastIncrease();
+                if (!Double.isNaN(thrBefore)
+                        && stage.throughputNow() < thrBefore * MIN_THROUGHPUT_GAIN) {
+                    int revertStep = Math.max(0, stage.lastIncreaseStep());
+                    return Math.max(min, current - revertStep);
+                }
                 int stepUp = Math.max(1, (int) Math.floor(current * 0.10));
                 return Math.min(max, current + stepUp);
             }

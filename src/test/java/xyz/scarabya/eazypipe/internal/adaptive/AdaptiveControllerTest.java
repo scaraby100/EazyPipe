@@ -282,7 +282,8 @@ class AdaptiveControllerTest {
         int grown = IoConcurrencyLimiter.computeTarget(
                 new IoConcurrencyLimiter.IoStageView(
                         "remote-api", StageState.BOTTLENECK, 4, 1, 32,
-                        11_000_000.0, 10_000_000.0, 0.0, false),
+                        11_000_000.0, 10_000_000.0, 0.0, 0.0, false,
+                        100.0, Double.NaN, 0),
                 tuning);
         assertEquals(5, grown);
 
@@ -290,7 +291,8 @@ class AdaptiveControllerTest {
         int backedOffLatency = IoConcurrencyLimiter.computeTarget(
                 new IoConcurrencyLimiter.IoStageView(
                         "remote-api", StageState.BOTTLENECK, 12, 1, 32,
-                        25_000_000.0, 10_000_000.0, 0.0, false),
+                        25_000_000.0, 10_000_000.0, 0.0, 0.0, false,
+                        100.0, Double.NaN, 0),
                 tuning);
         assertEquals(9, backedOffLatency);
 
@@ -298,9 +300,51 @@ class AdaptiveControllerTest {
         int backedOffErrors = IoConcurrencyLimiter.computeTarget(
                 new IoConcurrencyLimiter.IoStageView(
                         "remote-api", StageState.BOTTLENECK, 12, 1, 32,
-                        10_500_000.0, 10_000_000.0, 0.12, false),
+                        10_500_000.0, 10_000_000.0, 0.12, 0.0, false,
+                        100.0, Double.NaN, 0),
                 tuning);
         assertEquals(9, backedOffErrors);
+    }
+
+    @Test
+    void ioLimiterBacksOffOnRetryRateRevertsOnFlatGradientAndFreezesWhenBraked() {
+        AdaptiveConfig.Tuning tuning = AdaptiveConfig.Tuning.balanced(); // retryRateThreshold = 0.05
+
+        // High retry rate (> 0.05) triggers backoff even with healthy latency and 0% final errors.
+        int retryBackoff = IoConcurrencyLimiter.computeTarget(
+                new IoConcurrencyLimiter.IoStageView(
+                        "embed-api", StageState.BOTTLENECK, 12, 1, 32,
+                        10_000_000.0, 10_000_000.0, 0.0, 0.08, false,
+                        100.0, Double.NaN, 0),
+                tuning);
+        assertEquals(9, retryBackoff);
+
+        // Gradient check: throughput did not grow >= 2% after last +2 step -> revert 6 -> 4.
+        int gradientRevert = IoConcurrencyLimiter.computeTarget(
+                new IoConcurrencyLimiter.IoStageView(
+                        "embed-api", StageState.BOTTLENECK, 6, 1, 32,
+                        10_000_000.0, 10_000_000.0, 0.0, 0.0, false,
+                        100.5, 100.0, 2),
+                tuning);
+        assertEquals(4, gradientRevert);
+
+        // Gradient check passes when throughput grew >= 2%: scales up 6 -> 7.
+        int gradientGrow = IoConcurrencyLimiter.computeTarget(
+                new IoConcurrencyLimiter.IoStageView(
+                        "embed-api", StageState.BOTTLENECK, 6, 1, 32,
+                        10_000_000.0, 10_000_000.0, 0.0, 0.0, false,
+                        110.0, 100.0, 2),
+                tuning);
+        assertEquals(7, gradientGrow);
+
+        // Braked BOTTLENECK stage stays frozen at currentConcurrency.
+        int brakedHold = IoConcurrencyLimiter.computeTarget(
+                new IoConcurrencyLimiter.IoStageView(
+                        "embed-api", StageState.BOTTLENECK, 6, 1, 32,
+                        10_000_000.0, 10_000_000.0, 0.0, 0.0, true,
+                        110.0, Double.NaN, 0),
+                tuning);
+        assertEquals(6, brakedHold);
     }
 
     @Test

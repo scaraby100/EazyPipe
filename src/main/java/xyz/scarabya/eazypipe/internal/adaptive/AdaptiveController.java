@@ -84,6 +84,8 @@ public final class AdaptiveController {
         private int consecutiveTicks;
         private Instant lastScaledAt;
         private StageTelemetry.Snapshot lastSnapshot;
+        private double throughputBeforeLastIncrease = Double.NaN;
+        private int lastIncreaseStep;
 
         private StageRuntimeState(ManagedStage descriptor) {
             this.descriptor = descriptor;
@@ -201,6 +203,11 @@ public final class AdaptiveController {
                     rs.consecutiveTicks = 1;
                 }
 
+                if (classified != StageState.BOTTLENECK) {
+                    rs.throughputBeforeLastIncrease = Double.NaN;
+                    rs.lastIncreaseStep = 0;
+                }
+
                 persistent[i] = rs.consecutiveTicks >= tuning.persistenceTicks();
                 cooldownReady[i] = rs.lastScaledAt == null
                         || Duration.between(rs.lastScaledAt, now).compareTo(tuning.cooldown()) >= 0;
@@ -285,9 +292,20 @@ public final class AdaptiveController {
                         snap.emaServiceNanos(),
                         snap.baselineServiceNanos(),
                         snap.emaErrorRate(),
-                        braked[i]);
+                        snap.emaRetryRate(),
+                        braked[i],
+                        snap.emaThroughputPerSec(),
+                        rs.throughputBeforeLastIncrease,
+                        rs.lastIncreaseStep);
                 int next = IoConcurrencyLimiter.computeTarget(view, tuning);
                 if (next != current && !shouldSuppressIncrease(current, next, tuning.minRelativeChange())) {
+                    if (next > current) {
+                        rs.throughputBeforeLastIncrease = snap.emaThroughputPerSec();
+                        rs.lastIncreaseStep = next - current;
+                    } else {
+                        rs.throughputBeforeLastIncrease = Double.NaN;
+                        rs.lastIncreaseStep = 0;
+                    }
                     String reason = braked[i] ? "Downstream brake: " + states[i] : "IO AIMD/Vegas: " + states[i];
                     emitted.add(applyChange(rs, states[i], current, next, now, reason));
                 }
