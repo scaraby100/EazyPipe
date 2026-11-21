@@ -25,6 +25,7 @@ import java.util.function.BiConsumer;
 import java.util.function.Function;
 import java.util.stream.Collector;
 import java.util.stream.Collectors;
+import xyz.scarabya.eazypipe.adaptive.AdaptiveConfig;
 
 /**
  * Immutable, reusable fluent pipeline builder producing items of type {@code T}.
@@ -247,12 +248,37 @@ public final class Pipeline<T> {
 
     /**
      * Returns a copy of this pipeline using the supplied {@link PipeConfig}.
+     * Any subsequent {@code configure(...)} call replaces earlier {@link #adaptive} settings.
      */
     public Pipeline<T> configure(PipeConfig config) {
         return new Pipeline<>(
                 Objects.requireNonNull(config, "config must not be null"),
                 sourceStage,
                 intermediateStages);
+    }
+
+    /**
+     * Enables end-to-end adaptive concurrency control using {@link AdaptiveConfig#balanced()}.
+     *
+     * <p>A subsequent {@link #configure(PipeConfig)} call overrides this setting.
+     *
+     * @return a new {@link Pipeline} with adaptive concurrency enabled
+     */
+    public Pipeline<T> adaptive() {
+        return adaptive(AdaptiveConfig.balanced());
+    }
+
+    /**
+     * Enables end-to-end adaptive concurrency control using the supplied {@link AdaptiveConfig}.
+     *
+     * <p>A subsequent {@link #configure(PipeConfig)} call overrides this setting.
+     *
+     * @param adaptiveConfig the adaptive configuration to apply (must not be {@code null})
+     * @return a new {@link Pipeline} with the specified adaptive configuration
+     */
+    public Pipeline<T> adaptive(AdaptiveConfig adaptiveConfig) {
+        Objects.requireNonNull(adaptiveConfig, "adaptiveConfig must not be null");
+        return configure(config.withAdaptive(adaptiveConfig));
     }
 
     // -------------------------------------------------------------------------

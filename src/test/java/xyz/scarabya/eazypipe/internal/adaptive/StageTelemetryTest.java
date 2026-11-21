@@ -19,6 +19,8 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import org.junit.jupiter.api.Test;
+import xyz.scarabya.eazypipe.adaptive.AdaptiveConfig;
+import xyz.scarabya.eazypipe.adaptive.StageState;
 
 class StageTelemetryTest {
 
@@ -80,5 +82,41 @@ class StageTelemetryTest {
         StageTelemetry.Snapshot lowered = telemetry.sample(
                 windowNanos, 1.0, 0.5, 0.5, 0L, 0L, 0L, 1, 0.01);
         assertEquals((double) twoMs, lowered.baselineServiceNanos(), 1e-3);
+    }
+
+    @Test
+    void schmittTriggerHysteresisStabilizesBottleneckAndStarvedTransitions() {
+        StageTelemetry telemetry = new StageTelemetry();
+        AdaptiveConfig.Tuning tuning = AdaptiveConfig.Tuning.balanced();
+
+        // BOTTLENECK: enters above 0.75, stays inside deadband [0.70, 0.75] when previous==BOTTLENECK,
+        // exits below deadbandHigh (0.70), and does not re-enter at 0.72 from BALANCED.
+        assertEquals(StageState.BOTTLENECK, telemetry.classify(
+                snapshotWith(0.80, 0.10, 0.0, 0.0, 1), tuning, true, true, StageState.BALANCED));
+        assertEquals(StageState.BOTTLENECK, telemetry.classify(
+                snapshotWith(0.72, 0.10, 0.0, 0.0, 1), tuning, true, true, StageState.BOTTLENECK));
+        assertEquals(StageState.BALANCED, telemetry.classify(
+                snapshotWith(0.65, 0.10, 0.0, 0.0, 1), tuning, true, true, StageState.BOTTLENECK));
+        assertEquals(StageState.BALANCED, telemetry.classify(
+                snapshotWith(0.72, 0.10, 0.0, 0.0, 1), tuning, true, true, StageState.BALANCED));
+
+        // STARVED: enters below 0.20, stays inside [0.20, 0.30] when previous==STARVED,
+        // exits above deadbandLow (0.30), and does not re-enter at 0.25 from BALANCED.
+        assertEquals(StageState.STARVED, telemetry.classify(
+                snapshotWith(0.15, 0.10, 0.25, 0.0, 1), tuning, true, true, StageState.BALANCED));
+        assertEquals(StageState.STARVED, telemetry.classify(
+                snapshotWith(0.25, 0.10, 0.25, 0.0, 1), tuning, true, true, StageState.STARVED));
+        assertEquals(StageState.BALANCED, telemetry.classify(
+                snapshotWith(0.35, 0.10, 0.25, 0.0, 1), tuning, true, true, StageState.STARVED));
+        assertEquals(StageState.BALANCED, telemetry.classify(
+                snapshotWith(0.25, 0.10, 0.25, 0.0, 1), tuning, true, true, StageState.BALANCED));
+    }
+
+    private static StageTelemetry.Snapshot snapshotWith(
+            double inFill, double outFill, double inWait, double outWait, int activeWorkers) {
+        return new StageTelemetry.Snapshot(
+                0L, 0L, 0L, activeWorkers,
+                0.0, 0.0, 0.0, 0.0,
+                inFill, outFill, inWait, outWait);
     }
 }

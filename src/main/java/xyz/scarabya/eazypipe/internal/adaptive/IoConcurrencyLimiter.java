@@ -52,16 +52,16 @@ public final class IoConcurrencyLimiter {
      * Computes the next concurrency target for an {@code IO_BOUND} stage.
      *
      * @param stage current stage view
-     * @param config adaptive configuration thresholds
+     * @param tuning adaptive tuning thresholds
      * @return new concurrency clamped to {@code [minConcurrency, maxConcurrency]}
      */
-    public static int computeTarget(IoStageView stage, AdaptiveConfig config) {
+    public static int computeTarget(IoStageView stage, AdaptiveConfig.Tuning tuning) {
         int current = stage.currentConcurrency();
         int min = stage.minConcurrency();
         int max = stage.maxConcurrency();
 
         boolean latencySaturated = stage.baselineServiceNanos() > 0.0
-                && stage.emaServiceNanos() > config.ioLatencyBeta() * stage.baselineServiceNanos();
+                && stage.emaServiceNanos() > tuning.ioLatencyBeta() * stage.baselineServiceNanos();
         boolean errorSaturated = stage.emaErrorRate() > HIGH_ERROR_THRESHOLD;
 
         if (stage.state() == StageState.BACKPRESSURED || latencySaturated || errorSaturated) {
@@ -76,7 +76,7 @@ public final class IoConcurrencyLimiter {
 
         if (stage.state() == StageState.BOTTLENECK) {
             boolean healthyLatency = stage.baselineServiceNanos() <= 0.0
-                    || stage.emaServiceNanos() <= config.ioLatencyAlpha() * stage.baselineServiceNanos();
+                    || stage.emaServiceNanos() <= tuning.ioLatencyAlpha() * stage.baselineServiceNanos();
             boolean healthyErrors = stage.emaErrorRate() <= HEALTHY_ERROR_THRESHOLD;
             if (healthyLatency && healthyErrors) {
                 int stepUp = Math.max(1, (int) Math.floor(current * 0.10));

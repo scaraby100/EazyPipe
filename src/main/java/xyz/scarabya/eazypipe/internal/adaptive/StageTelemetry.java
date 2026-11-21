@@ -189,20 +189,39 @@ public final class StageTelemetry {
         return snapshot;
     }
 
-    public StageState classify(Snapshot snapshot, AdaptiveConfig config, boolean hasInput, boolean hasOutput) {
+    public StageState classify(
+            Snapshot snapshot,
+            AdaptiveConfig.Tuning tuning,
+            boolean hasInput,
+            boolean hasOutput,
+            StageState previous) {
+        double outFill = snapshot.emaOutputFill();
+        double outWait = snapshot.emaOutputWaitRatio();
+        double inFill = snapshot.emaInputFill();
+        double inWait = snapshot.emaInputWaitRatio();
+        double dbLow = tuning.deadbandLow();
+        double dbHigh = tuning.deadbandHigh();
+        double bp = tuning.backpressuredThreshold();
+        double bi = tuning.bottleneckInputThreshold();
+        double st = tuning.starvedThreshold();
+
         if (hasOutput
-                && (snapshot.emaOutputFill() > config.backpressuredThreshold()
-                        || snapshot.emaOutputWaitRatio() > 0.50)) {
+                && (outFill > bp
+                        || outWait > 0.50
+                        || (previous == StageState.BACKPRESSURED
+                                && (outFill > Math.min(dbHigh, bp) || outWait > 0.40)))) {
             return StageState.BACKPRESSURED;
         }
         if (hasInput
-                && snapshot.emaInputFill() > config.bottleneckInputThreshold()
-                && (!hasOutput || snapshot.emaOutputFill() < config.bottleneckOutputCeiling())) {
+                && (!hasOutput || outFill < tuning.bottleneckOutputCeiling())
+                && (inFill > bi
+                        || (previous == StageState.BOTTLENECK && inFill > Math.min(dbHigh, bi)))) {
             return StageState.BOTTLENECK;
         }
         if (hasInput
-                && snapshot.emaInputFill() < config.starvedThreshold()
-                && (snapshot.emaInputWaitRatio() > 0.15 || snapshot.activeWorkers() == 0)) {
+                && (inWait > 0.15 || snapshot.activeWorkers() == 0)
+                && (inFill < st
+                        || (previous == StageState.STARVED && inFill < Math.max(dbLow, st)))) {
             return StageState.STARVED;
         }
         return StageState.BALANCED;

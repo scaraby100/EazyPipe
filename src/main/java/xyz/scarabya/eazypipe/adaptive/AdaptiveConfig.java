@@ -26,17 +26,7 @@ import java.util.function.Consumer;
  * @param enabled whether adaptive concurrency control is active
  * @param tickInterval sampling and control loop interval (must be positive)
  * @param cpuBudget optional override for total concurrent permit budget across {@code CPU_BOUND} stages ({@code 0} to inherit from {@code PipeConfig})
- * @param emaAlpha exponential moving average smoothing factor in {@code (0.0, 1.0]}
- * @param ioLatencyAlpha Vegas/AIMD increase ceiling relative to baseline latency ({@code >= 1.0})
- * @param ioLatencyBeta Vegas/AIMD decrease threshold relative to baseline latency ({@code >= ioLatencyAlpha})
- * @param starvedThreshold input fill ratio below which a stage may be classified as {@link StageState#STARVED}
- * @param backpressuredThreshold output fill ratio above which a stage is classified as {@link StageState#BACKPRESSURED}
- * @param bottleneckInputThreshold input fill ratio above which a stage is considered backlogged
- * @param bottleneckOutputCeiling output fill ratio below which a backlogged stage can safely scale up
- * @param deadbandLow lower bound of the neutral deadband zone
- * @param deadbandHigh upper bound of the neutral deadband zone
- * @param persistenceTicks consecutive ticks in the same state required before applying a scale change ({@code >= 1})
- * @param cooldown minimum duration between successive concurrency changes on the same stage
+ * @param tuning fine-grained smoothing, Schmitt-trigger, and limiter tuning parameters
  * @param onDecision optional listener notified whenever a {@link ScalingDecision} occurs
  * @param clock clock used for cooldown timestamps and decision events (injectable for deterministic testing)
  */
@@ -44,17 +34,7 @@ public record AdaptiveConfig(
         boolean enabled,
         Duration tickInterval,
         int cpuBudget,
-        double emaAlpha,
-        double ioLatencyAlpha,
-        double ioLatencyBeta,
-        double starvedThreshold,
-        double backpressuredThreshold,
-        double bottleneckInputThreshold,
-        double bottleneckOutputCeiling,
-        double deadbandLow,
-        double deadbandHigh,
-        int persistenceTicks,
-        Duration cooldown,
+        Tuning tuning,
         Consumer<ScalingDecision> onDecision,
         Clock clock) {
 
@@ -66,47 +46,44 @@ public record AdaptiveConfig(
         if (cpuBudget < 0) {
             throw new IllegalArgumentException("cpuBudget must be >= 0, got " + cpuBudget);
         }
-        if (Double.isNaN(emaAlpha) || emaAlpha <= 0.0 || emaAlpha > 1.0) {
-            throw new IllegalArgumentException("emaAlpha must be in (0.0, 1.0]");
-        }
-        if (Double.isNaN(ioLatencyAlpha) || ioLatencyAlpha < 1.0) {
-            throw new IllegalArgumentException("ioLatencyAlpha must be >= 1.0");
-        }
-        if (Double.isNaN(ioLatencyBeta) || ioLatencyBeta < ioLatencyAlpha) {
-            throw new IllegalArgumentException("ioLatencyBeta must be >= ioLatencyAlpha");
-        }
-        validateRatio("starvedThreshold", starvedThreshold);
-        validateRatio("backpressuredThreshold", backpressuredThreshold);
-        validateRatio("bottleneckInputThreshold", bottleneckInputThreshold);
-        validateRatio("bottleneckOutputCeiling", bottleneckOutputCeiling);
-        validateRatio("deadbandLow", deadbandLow);
-        validateRatio("deadbandHigh", deadbandHigh);
-        if (deadbandLow > deadbandHigh) {
-            throw new IllegalArgumentException("deadbandLow must be <= deadbandHigh");
-        }
-        if (persistenceTicks < 1) {
-            throw new IllegalArgumentException("persistenceTicks must be >= 1");
-        }
-        Objects.requireNonNull(cooldown, "cooldown must not be null");
-        if (cooldown.isNegative()) {
-            throw new IllegalArgumentException("cooldown must not be negative");
-        }
+        Objects.requireNonNull(tuning, "tuning must not be null");
         Objects.requireNonNull(clock, "clock must not be null");
     }
 
-    private static void validateRatio(String name, double value) {
-        if (Double.isNaN(value) || value < 0.0 || value > 1.0) {
-            throw new IllegalArgumentException(name + " must be in [0.0, 1.0], got " + value);
-        }
+    /**
+     * Returns the recommended balanced {@link AdaptiveConfig} preset.
+     *
+     * @return balanced enabled {@link AdaptiveConfig}
+     */
+    public static AdaptiveConfig balanced() {
+        return builder().enabled(true).tickInterval(Duration.ofMillis(250)).tuning(Tuning.balanced()).build();
     }
 
     /**
-     * Returns an enabled default {@link AdaptiveConfig} tuned for typical mixed CPU/IO workloads.
+     * Alias for {@link #balanced()}.
      *
      * @return default enabled {@link AdaptiveConfig}
      */
     public static AdaptiveConfig defaults() {
-        return builder().enabled(true).build();
+        return balanced();
+    }
+
+    /**
+     * Returns a throughput-oriented {@link AdaptiveConfig} preset tolerating fuller queues and scaling faster.
+     *
+     * @return throughput-oriented {@link AdaptiveConfig}
+     */
+    public static AdaptiveConfig throughput() {
+        return builder().enabled(true).tickInterval(Duration.ofMillis(250)).tuning(Tuning.throughput()).build();
+    }
+
+    /**
+     * Returns a low-latency {@link AdaptiveConfig} preset keeping queues short and backing off rapidly.
+     *
+     * @return low-latency {@link AdaptiveConfig}
+     */
+    public static AdaptiveConfig lowLatency() {
+        return builder().enabled(true).tickInterval(Duration.ofMillis(100)).tuning(Tuning.lowLatency()).build();
     }
 
     /**
@@ -118,13 +95,181 @@ public record AdaptiveConfig(
         return builder().enabled(false).build();
     }
 
-    /**
-     * Creates a new mutable {@link Builder}.
-     *
-     * @return a new {@link Builder}
-     */
     public static Builder builder() {
         return new Builder();
+    }
+
+    public Builder toBuilder() {
+        return new Builder()
+                .enabled(enabled)
+                .tickInterval(tickInterval)
+                .cpuBudget(cpuBudget)
+                .tuning(tuning)
+                .onDecision(onDecision)
+                .clock(clock);
+    }
+
+    /**
+     * Fine-grained thresholds and smoothing parameters for the adaptive control loop.
+     */
+    public record Tuning(
+            double emaAlpha,
+            double ioLatencyAlpha,
+            double ioLatencyBeta,
+            double starvedThreshold,
+            double backpressuredThreshold,
+            double bottleneckInputThreshold,
+            double bottleneckOutputCeiling,
+            double deadbandLow,
+            double deadbandHigh,
+            double minRelativeChange,
+            double baselineDecay,
+            double retryRateThreshold,
+            int persistenceTicks,
+            Duration cooldown) {
+
+        public Tuning {
+            if (Double.isNaN(emaAlpha) || emaAlpha <= 0.0 || emaAlpha > 1.0) {
+                throw new IllegalArgumentException("emaAlpha must be in (0.0, 1.0]");
+            }
+            if (Double.isNaN(ioLatencyAlpha) || ioLatencyAlpha < 1.0) {
+                throw new IllegalArgumentException("ioLatencyAlpha must be >= 1.0");
+            }
+            if (Double.isNaN(ioLatencyBeta) || ioLatencyBeta < ioLatencyAlpha) {
+                throw new IllegalArgumentException("ioLatencyBeta must be >= ioLatencyAlpha");
+            }
+            validateRatio("starvedThreshold", starvedThreshold);
+            validateRatio("backpressuredThreshold", backpressuredThreshold);
+            validateRatio("bottleneckInputThreshold", bottleneckInputThreshold);
+            validateRatio("bottleneckOutputCeiling", bottleneckOutputCeiling);
+            validateRatio("deadbandLow", deadbandLow);
+            validateRatio("deadbandHigh", deadbandHigh);
+            validateRatio("minRelativeChange", minRelativeChange);
+            validateRatio("baselineDecay", baselineDecay);
+            validateRatio("retryRateThreshold", retryRateThreshold);
+            if (deadbandLow > deadbandHigh) {
+                throw new IllegalArgumentException("deadbandLow must be <= deadbandHigh");
+            }
+            if (starvedThreshold > deadbandLow) {
+                throw new IllegalArgumentException(
+                        "starvedThreshold (" + starvedThreshold + ") must be <= deadbandLow (" + deadbandLow + ")");
+            }
+            double upperCeiling = Math.min(bottleneckInputThreshold, backpressuredThreshold);
+            if (deadbandHigh > upperCeiling) {
+                throw new IllegalArgumentException(
+                        "deadbandHigh (" + deadbandHigh
+                                + ") must be <= min(bottleneckInputThreshold, backpressuredThreshold) ("
+                                + upperCeiling + ")");
+            }
+            if (persistenceTicks < 1) {
+                throw new IllegalArgumentException("persistenceTicks must be >= 1");
+            }
+            Objects.requireNonNull(cooldown, "cooldown must not be null");
+            if (cooldown.isNegative()) {
+                throw new IllegalArgumentException("cooldown must not be negative");
+            }
+        }
+
+        private static void validateRatio(String name, double value) {
+            if (Double.isNaN(value) || value < 0.0 || value > 1.0) {
+                throw new IllegalArgumentException(name + " must be in [0.0, 1.0], got " + value);
+            }
+        }
+
+        public static Tuning balanced() {
+            return new Tuning(
+                    0.30, 1.25, 1.60,
+                    0.20, 0.80, 0.75, 0.60,
+                    0.30, 0.70, 0.10, 0.01, 0.05,
+                    2, Duration.ofSeconds(1));
+        }
+
+        public static Tuning throughput() {
+            return new Tuning(
+                    0.30, 1.50, 2.00,
+                    0.10, 0.90, 0.60, 0.75,
+                    0.25, 0.55, 0.05, 0.01, 0.10,
+                    2, Duration.ofMillis(500));
+        }
+
+        public static Tuning lowLatency() {
+            return new Tuning(
+                    0.50, 1.10, 1.30,
+                    0.15, 0.60, 0.50, 0.40,
+                    0.20, 0.45, 0.10, 0.02, 0.02,
+                    1, Duration.ofMillis(250));
+        }
+
+        public static Builder builder() {
+            return new Builder();
+        }
+
+        public Builder toBuilder() {
+            return new Builder(this);
+        }
+
+        public static final class Builder {
+
+            private double emaAlpha;
+            private double ioLatencyAlpha;
+            private double ioLatencyBeta;
+            private double starvedThreshold;
+            private double backpressuredThreshold;
+            private double bottleneckInputThreshold;
+            private double bottleneckOutputCeiling;
+            private double deadbandLow;
+            private double deadbandHigh;
+            private double minRelativeChange;
+            private double baselineDecay;
+            private double retryRateThreshold;
+            private int persistenceTicks;
+            private Duration cooldown;
+
+            private Builder() {
+                this(balanced());
+            }
+
+            private Builder(Tuning base) {
+                this.emaAlpha = base.emaAlpha;
+                this.ioLatencyAlpha = base.ioLatencyAlpha;
+                this.ioLatencyBeta = base.ioLatencyBeta;
+                this.starvedThreshold = base.starvedThreshold;
+                this.backpressuredThreshold = base.backpressuredThreshold;
+                this.bottleneckInputThreshold = base.bottleneckInputThreshold;
+                this.bottleneckOutputCeiling = base.bottleneckOutputCeiling;
+                this.deadbandLow = base.deadbandLow;
+                this.deadbandHigh = base.deadbandHigh;
+                this.minRelativeChange = base.minRelativeChange;
+                this.baselineDecay = base.baselineDecay;
+                this.retryRateThreshold = base.retryRateThreshold;
+                this.persistenceTicks = base.persistenceTicks;
+                this.cooldown = base.cooldown;
+            }
+
+            public Builder emaAlpha(double emaAlpha) { this.emaAlpha = emaAlpha; return this; }
+            public Builder ioLatencyAlpha(double ioLatencyAlpha) { this.ioLatencyAlpha = ioLatencyAlpha; return this; }
+            public Builder ioLatencyBeta(double ioLatencyBeta) { this.ioLatencyBeta = ioLatencyBeta; return this; }
+            public Builder starvedThreshold(double starvedThreshold) { this.starvedThreshold = starvedThreshold; return this; }
+            public Builder backpressuredThreshold(double backpressuredThreshold) { this.backpressuredThreshold = backpressuredThreshold; return this; }
+            public Builder bottleneckInputThreshold(double bottleneckInputThreshold) { this.bottleneckInputThreshold = bottleneckInputThreshold; return this; }
+            public Builder bottleneckOutputCeiling(double bottleneckOutputCeiling) { this.bottleneckOutputCeiling = bottleneckOutputCeiling; return this; }
+            public Builder deadbandLow(double deadbandLow) { this.deadbandLow = deadbandLow; return this; }
+            public Builder deadbandHigh(double deadbandHigh) { this.deadbandHigh = deadbandHigh; return this; }
+            public Builder deadband(double low, double high) { this.deadbandLow = low; this.deadbandHigh = high; return this; }
+            public Builder minRelativeChange(double minRelativeChange) { this.minRelativeChange = minRelativeChange; return this; }
+            public Builder baselineDecay(double baselineDecay) { this.baselineDecay = baselineDecay; return this; }
+            public Builder retryRateThreshold(double retryRateThreshold) { this.retryRateThreshold = retryRateThreshold; return this; }
+            public Builder persistenceTicks(int persistenceTicks) { this.persistenceTicks = persistenceTicks; return this; }
+            public Builder cooldown(Duration cooldown) { this.cooldown = cooldown; return this; }
+
+            public Tuning build() {
+                return new Tuning(
+                        emaAlpha, ioLatencyAlpha, ioLatencyBeta,
+                        starvedThreshold, backpressuredThreshold, bottleneckInputThreshold, bottleneckOutputCeiling,
+                        deadbandLow, deadbandHigh, minRelativeChange, baselineDecay, retryRateThreshold,
+                        persistenceTicks, cooldown);
+            }
+        }
     }
 
     /**
@@ -135,17 +280,7 @@ public record AdaptiveConfig(
         private boolean enabled = true;
         private Duration tickInterval = Duration.ofMillis(250);
         private int cpuBudget = 0;
-        private double emaAlpha = 0.30;
-        private double ioLatencyAlpha = 1.25;
-        private double ioLatencyBeta = 1.60;
-        private double starvedThreshold = 0.20;
-        private double backpressuredThreshold = 0.80;
-        private double bottleneckInputThreshold = 0.75;
-        private double bottleneckOutputCeiling = 0.60;
-        private double deadbandLow = 0.30;
-        private double deadbandHigh = 0.70;
-        private int persistenceTicks = 2;
-        private Duration cooldown = Duration.ofSeconds(1);
+        private Tuning tuning = Tuning.balanced();
         private Consumer<ScalingDecision> onDecision;
         private Clock clock = Clock.systemUTC();
 
@@ -167,54 +302,8 @@ public record AdaptiveConfig(
             return this;
         }
 
-        public Builder emaAlpha(double emaAlpha) {
-            this.emaAlpha = emaAlpha;
-            return this;
-        }
-
-        public Builder ioLatencyAlpha(double ioLatencyAlpha) {
-            this.ioLatencyAlpha = ioLatencyAlpha;
-            return this;
-        }
-
-        public Builder ioLatencyBeta(double ioLatencyBeta) {
-            this.ioLatencyBeta = ioLatencyBeta;
-            return this;
-        }
-
-        public Builder starvedThreshold(double starvedThreshold) {
-            this.starvedThreshold = starvedThreshold;
-            return this;
-        }
-
-        public Builder backpressuredThreshold(double backpressuredThreshold) {
-            this.backpressuredThreshold = backpressuredThreshold;
-            return this;
-        }
-
-        public Builder bottleneckInputThreshold(double bottleneckInputThreshold) {
-            this.bottleneckInputThreshold = bottleneckInputThreshold;
-            return this;
-        }
-
-        public Builder bottleneckOutputCeiling(double bottleneckOutputCeiling) {
-            this.bottleneckOutputCeiling = bottleneckOutputCeiling;
-            return this;
-        }
-
-        public Builder deadband(double low, double high) {
-            this.deadbandLow = low;
-            this.deadbandHigh = high;
-            return this;
-        }
-
-        public Builder persistenceTicks(int persistenceTicks) {
-            this.persistenceTicks = persistenceTicks;
-            return this;
-        }
-
-        public Builder cooldown(Duration cooldown) {
-            this.cooldown = cooldown;
+        public Builder tuning(Tuning tuning) {
+            this.tuning = tuning;
             return this;
         }
 
@@ -229,23 +318,7 @@ public record AdaptiveConfig(
         }
 
         public AdaptiveConfig build() {
-            return new AdaptiveConfig(
-                    enabled,
-                    tickInterval,
-                    cpuBudget,
-                    emaAlpha,
-                    ioLatencyAlpha,
-                    ioLatencyBeta,
-                    starvedThreshold,
-                    backpressuredThreshold,
-                    bottleneckInputThreshold,
-                    bottleneckOutputCeiling,
-                    deadbandLow,
-                    deadbandHigh,
-                    persistenceTicks,
-                    cooldown,
-                    onDecision,
-                    clock);
+            return new AdaptiveConfig(enabled, tickInterval, cpuBudget, tuning, onDecision, clock);
         }
     }
 }

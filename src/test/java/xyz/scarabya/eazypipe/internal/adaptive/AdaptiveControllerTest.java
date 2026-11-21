@@ -17,6 +17,7 @@ package xyz.scarabya.eazypipe.internal.adaptive;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.time.Clock;
@@ -75,9 +76,11 @@ class AdaptiveControllerTest {
         AdaptiveConfig config = AdaptiveConfig.builder()
                 .clock(clock)
                 .tickInterval(Duration.ofMillis(250))
-                .emaAlpha(1.0)
-                .persistenceTicks(2)
-                .cooldown(Duration.ofSeconds(1))
+                .tuning(AdaptiveConfig.Tuning.balanced().toBuilder()
+                        .emaAlpha(1.0)
+                        .persistenceTicks(2)
+                        .cooldown(Duration.ofSeconds(1))
+                        .build())
                 .build();
 
         AdaptiveController controller = new AdaptiveController(
@@ -191,9 +194,11 @@ class AdaptiveControllerTest {
         AdaptiveConfig config = AdaptiveConfig.builder()
                 .clock(clock)
                 .cpuBudget(6)
-                .emaAlpha(1.0)
-                .persistenceTicks(1)
-                .cooldown(Duration.ZERO)
+                .tuning(AdaptiveConfig.Tuning.balanced().toBuilder()
+                        .emaAlpha(1.0)
+                        .persistenceTicks(1)
+                        .cooldown(Duration.ZERO)
+                        .build())
                 .build();
 
         AdaptiveController controller = new AdaptiveController(
@@ -235,9 +240,11 @@ class AdaptiveControllerTest {
         AdaptiveConfig config = AdaptiveConfig.builder()
                 .clock(clock)
                 .tickInterval(Duration.ofMillis(250))
-                .emaAlpha(1.0)
-                .persistenceTicks(2)
-                .cooldown(Duration.ofMillis(250))
+                .tuning(AdaptiveConfig.Tuning.balanced().toBuilder()
+                        .emaAlpha(1.0)
+                        .persistenceTicks(2)
+                        .cooldown(Duration.ofMillis(250))
+                        .build())
                 .build();
 
         // Upstream input is full (0.95) BUT its output into downstream is also full (0.92) -> BACKPRESSURED!
@@ -269,14 +276,14 @@ class AdaptiveControllerTest {
 
     @Test
     void scenarioCExternalIoSaturationConvergesAroundKneeViaAimdVegas() {
-        AdaptiveConfig config = AdaptiveConfig.defaults();
+        AdaptiveConfig.Tuning tuning = AdaptiveConfig.Tuning.balanced();
 
         // Below knee K: healthy latency within 1.25x baseline + BOTTLENECK -> additive increase.
         int grown = IoConcurrencyLimiter.computeTarget(
                 new IoConcurrencyLimiter.IoStageView(
                         "remote-api", StageState.BOTTLENECK, 4, 1, 32,
                         11_000_000.0, 10_000_000.0, 0.0),
-                config);
+                tuning);
         assertEquals(5, grown);
 
         // Above knee K: latency exceeds 1.6x baseline (e.g., 25ms vs 10ms) -> multiplicative backoff (* 0.75).
@@ -284,7 +291,7 @@ class AdaptiveControllerTest {
                 new IoConcurrencyLimiter.IoStageView(
                         "remote-api", StageState.BOTTLENECK, 12, 1, 32,
                         25_000_000.0, 10_000_000.0, 0.0),
-                config);
+                tuning);
         assertEquals(9, backedOffLatency);
 
         // Error spike (> 5% HTTP 429/503) -> multiplicative backoff (* 0.75).
@@ -292,7 +299,7 @@ class AdaptiveControllerTest {
                 new IoConcurrencyLimiter.IoStageView(
                         "remote-api", StageState.BOTTLENECK, 12, 1, 32,
                         10_500_000.0, 10_000_000.0, 0.12),
-                config);
+                tuning);
         assertEquals(9, backedOffErrors);
     }
 
@@ -303,8 +310,10 @@ class AdaptiveControllerTest {
         PipeConfig pipeConfig = PipeConfig.builder()
                 .adaptive(AdaptiveConfig.builder()
                         .tickInterval(Duration.ofMillis(40))
-                        .persistenceTicks(2)
-                        .cooldown(Duration.ofMillis(40))
+                        .tuning(AdaptiveConfig.Tuning.balanced().toBuilder()
+                                .persistenceTicks(2)
+                                .cooldown(Duration.ofMillis(40))
+                                .build())
                         .onDecision(decisions::add)
                         .build())
                 .build();
@@ -343,9 +352,11 @@ class AdaptiveControllerTest {
 
         AdaptiveConfig config = AdaptiveConfig.builder()
                 .clock(clock)
-                .emaAlpha(1.0)
-                .persistenceTicks(1)
-                .cooldown(Duration.ZERO)
+                .tuning(AdaptiveConfig.Tuning.balanced().toBuilder()
+                        .emaAlpha(1.0)
+                        .persistenceTicks(1)
+                        .cooldown(Duration.ZERO)
+                        .build())
                 .build();
 
         AdaptiveController controller = new AdaptiveController(
@@ -367,5 +378,109 @@ class AdaptiveControllerTest {
         assertEquals(1, controller.currentStageSnapshots().size());
         assertEquals("aux-branch", controller.currentStageSnapshots().get(0).stageName());
         assertEquals(1L, controller.currentStageSnapshots().get(0).itemsCompleted());
+    }
+
+    @Test
+    void tuningPresetsValidateConsistentThresholds() {
+        assertTrue(AdaptiveConfig.balanced().enabled());
+        assertTrue(AdaptiveConfig.throughput().enabled());
+        assertTrue(AdaptiveConfig.lowLatency().enabled());
+        assertFalse(AdaptiveConfig.disabled().enabled());
+        assertEquals(Duration.ofMillis(100), AdaptiveConfig.lowLatency().tickInterval());
+
+        assertThrows(IllegalArgumentException.class, () ->
+                AdaptiveConfig.Tuning.balanced().toBuilder()
+                        .starvedThreshold(0.35)
+                        .deadband(0.30, 0.70)
+                        .build());
+        assertThrows(IllegalArgumentException.class, () ->
+                AdaptiveConfig.Tuning.balanced().toBuilder()
+                        .deadband(0.30, 0.78)
+                        .bottleneckInputThreshold(0.75)
+                        .build());
+        assertThrows(IllegalArgumentException.class, () ->
+                AdaptiveConfig.Tuning.balanced().toBuilder()
+                        .deadband(0.30, 0.75)
+                        .backpressuredThreshold(0.70)
+                        .build());
+    }
+
+    @Test
+    void pipelineAdaptiveShortcutEnablesAutobalancingWithoutPipeConfig() {
+        List<ScalingDecision> decisions = new CopyOnWriteArrayList<>();
+
+        AdaptiveConfig customAdaptive = AdaptiveConfig.balanced().toBuilder()
+                .tickInterval(Duration.ofMillis(40))
+                .tuning(AdaptiveConfig.Tuning.balanced().toBuilder()
+                        .persistenceTicks(2)
+                        .cooldown(Duration.ofMillis(40))
+                        .build())
+                .onDecision(decisions::add)
+                .build();
+
+        StageConfig slowIo = StageConfig.ioBound("slow-shortcut")
+                .concurrency(1, 1, 8)
+                .bufferCapacity(32)
+                .build();
+
+        try (PipeExecution<List<Integer>> exec = EazyPipe.<Integer>from(emitter -> {
+                    for (int i = 1; i <= 120; i++) {
+                        emitter.emit(i);
+                    }
+                })
+                .adaptive(customAdaptive)
+                .map(slowIo, n -> {
+                    Thread.sleep(6);
+                    return n * 2;
+                })
+                .startToList()) {
+
+            List<Integer> out = exec.join();
+            assertEquals(120, out.size());
+            assertTrue(decisions.stream().anyMatch(d ->
+                    d.stageName().equals("slow-shortcut") && d.newConcurrency() > d.previousConcurrency()));
+        }
+
+        // Verify zero-argument .adaptive() executes cleanly as well.
+        assertEquals(List.of(2, 4, 6), EazyPipe.of(1, 2, 3).adaptive().map(n -> n * 2).toList());
+    }
+
+    @Test
+    void minRelativeChangeSuppressesSmallScaleUpsWhileAllowingReductions() {
+        MutableClock clock = new MutableClock();
+        StageTelemetry telemetry = new StageTelemetry();
+        AtomicInteger target = new AtomicInteger(10);
+        AtomicReference<Double> inFill = new AtomicReference<>(0.90);
+        AtomicReference<Double> outFill = new AtomicReference<>(0.10);
+
+        AdaptiveConfig config = AdaptiveConfig.builder()
+                .clock(clock)
+                .tuning(AdaptiveConfig.Tuning.balanced().toBuilder()
+                        .emaAlpha(1.0)
+                        .minRelativeChange(0.25) // ceil(10 * 0.25) = 3; IO stepUp is floor(10 * 0.10) = 1 -> suppressed
+                        .persistenceTicks(1)
+                        .cooldown(Duration.ZERO)
+                        .build())
+                .build();
+
+        AdaptiveController controller = new AdaptiveController(
+                config,
+                4,
+                List.of(new AdaptiveController.ManagedStage(
+                        0, true, "io", StageKind.IO_BOUND, 1, 20, telemetry,
+                        true, true, inFill::get, outFill::get,
+                        () -> 0L, () -> 0L, () -> 0L,
+                        target::get, target::set)),
+                null);
+
+        assertTrue(controller.tick().isEmpty());
+        assertEquals(10, target.get());
+
+        // Reduction due to backpressure passes even with large minRelativeChange.
+        clock.advance(Duration.ofMillis(250));
+        outFill.set(0.95);
+        List<ScalingDecision> reductions = controller.tick();
+        assertEquals(1, reductions.size());
+        assertTrue(target.get() < 10);
     }
 }

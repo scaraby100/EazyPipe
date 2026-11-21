@@ -42,7 +42,6 @@ import xyz.scarabya.eazypipe.metrics.StageMetricsSnapshot;
 public final class AdaptiveController {
 
     private static final int MAX_DECISION_HISTORY = 256;
-    private static final double DEFAULT_BASELINE_DECAY = 0.01;
 
     /**
      * Public registration descriptor connecting a stage's telemetry and channel metrics to its permit target applier.
@@ -175,22 +174,24 @@ public final class AdaptiveController {
             boolean[] persistent = new boolean[stages.size()];
             boolean[] cooldownReady = new boolean[stages.size()];
 
+            AdaptiveConfig.Tuning tuning = config.tuning();
+
             // 1. Sample telemetry for every stage and classify state.
             for (int i = 0; i < stages.size(); i++) {
                 StageRuntimeState rs = stages.get(i);
                 ManagedStage d = rs.descriptor;
                 StageTelemetry.Snapshot snap = d.telemetry().sample(
                         windowNanos,
-                        config.emaAlpha(),
+                        tuning.emaAlpha(),
                         d.inputFillSupplier().getAsDouble(),
                         d.outputFillSupplier().getAsDouble(),
                         d.inputWaitNanosSupplier().getAsLong(),
                         d.outputWaitNanosSupplier().getAsLong(),
                         d.droppedCountSupplier().getAsLong(),
                         d.currentTargetSupplier().getAsInt(),
-                        DEFAULT_BASELINE_DECAY);
+                        tuning.baselineDecay());
                 rs.lastSnapshot = snap;
-                StageState classified = d.telemetry().classify(snap, config, d.hasInput(), d.hasOutput());
+                StageState classified = d.telemetry().classify(snap, tuning, d.hasInput(), d.hasOutput(), rs.lastState);
                 states[i] = classified;
 
                 if (classified == rs.lastState) {
@@ -200,9 +201,9 @@ public final class AdaptiveController {
                     rs.consecutiveTicks = 1;
                 }
 
-                persistent[i] = rs.consecutiveTicks >= config.persistenceTicks();
+                persistent[i] = rs.consecutiveTicks >= tuning.persistenceTicks();
                 cooldownReady[i] = rs.lastScaledAt == null
-                        || Duration.between(rs.lastScaledAt, now).compareTo(config.cooldown()) >= 0;
+                        || Duration.between(rs.lastScaledAt, now).compareTo(tuning.cooldown()) >= 0;
 
                 metricsListener.onStageMetrics(toMetricsSnapshot(rs, classified));
             }
@@ -238,8 +239,8 @@ public final class AdaptiveController {
                         snap.emaServiceNanos(),
                         snap.baselineServiceNanos(),
                         snap.emaErrorRate());
-                int next = IoConcurrencyLimiter.computeTarget(view, config);
-                if (next != current) {
+                int next = IoConcurrencyLimiter.computeTarget(view, tuning);
+                if (next != current && !shouldSuppressIncrease(current, next, tuning.minRelativeChange())) {
                     emitted.add(applyChange(rs, states[i], current, next, now, "IO AIMD/Vegas: " + states[i]));
                 }
             }
@@ -273,7 +274,9 @@ public final class AdaptiveController {
                     ManagedStage d = rs.descriptor;
                     int current = d.currentTargetSupplier().getAsInt();
                     int next = targets[i];
-                    if (next != current && d.minConcurrency() < d.maxConcurrency()) {
+                    if (next != current
+                            && d.minConcurrency() < d.maxConcurrency()
+                            && !shouldSuppressIncrease(current, next, tuning.minRelativeChange())) {
                         emitted.add(applyChange(
                                 rs,
                                 cpuStates.get(i),
@@ -287,6 +290,14 @@ public final class AdaptiveController {
 
             return List.copyOf(emitted);
         }
+    }
+
+    private static boolean shouldSuppressIncrease(int current, int next, double minRelativeChange) {
+        if (next <= current || minRelativeChange <= 0.0) {
+            return false;
+        }
+        int minStep = (int) Math.ceil(current * minRelativeChange);
+        return (next - current) < minStep;
     }
 
     private ScalingDecision applyChange(
