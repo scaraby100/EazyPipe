@@ -17,10 +17,14 @@ package xyz.scarabya.eazypipe;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assertions.assertTimeoutPreemptively;
 import static org.junit.jupiter.api.Assertions.assertTrue;
+
+import java.time.Duration;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -274,5 +278,51 @@ class BoundedChannelTest {
         assertEquals("y", s1.item());
         assertNull(eof);
         assertEquals(0, channel.size());
+    }
+
+    @Test
+    void receiveBatchSignalsProducersImmediatelyWhenMaxSizeExceedsCapacity() throws Exception {
+        BoundedChannel<Integer> channel = new BoundedChannel<>(2);
+        Thread producer = Thread.ofVirtual().start(() -> {
+            try {
+                for (int i = 1; i <= 5; i++) {
+                    channel.send(i);
+                }
+            } catch (InterruptedException ex) {
+                Thread.currentThread().interrupt();
+            }
+        });
+
+        List<Integer> batch = new ArrayList<>();
+        boolean received = assertTimeoutPreemptively(Duration.ofSeconds(1), () ->
+                channel.receiveBatch(batch, 5, TimeUnit.SECONDS.toNanos(2)));
+
+        assertTrue(received);
+        assertEquals(List.of(1, 2, 3, 4, 5), batch);
+        producer.join(2000);
+    }
+
+    @Test
+    void trySendReturnsNullWhenFullUnderBlockAndEnforcesOtherPolicies() throws Exception {
+        BoundedChannel<Integer> blocking = new BoundedChannel<>(2, OverflowPolicy.BLOCK);
+        BoundedChannel.SendResult r1 = blocking.trySend(1);
+        BoundedChannel.SendResult r2 = blocking.trySend(2);
+        BoundedChannel.SendResult r3 = blocking.trySend(3);
+
+        assertNotNull(r1);
+        assertEquals(BoundedChannel.SendStatus.ENQUEUED, r1.status());
+        assertNotNull(r2);
+        assertNull(r3);
+        assertEquals(2, blocking.size());
+
+        BoundedChannel<Integer> dropNewest = new BoundedChannel<>(1, OverflowPolicy.DROP_NEWEST);
+        assertEquals(BoundedChannel.SendStatus.ENQUEUED, dropNewest.trySend(10).status());
+        assertEquals(BoundedChannel.SendStatus.DROPPED_NEWEST, dropNewest.trySend(20).status());
+
+        BoundedChannel<Integer> dropOldest = new BoundedChannel<>(1, OverflowPolicy.DROP_OLDEST);
+        assertEquals(BoundedChannel.SendStatus.ENQUEUED, dropOldest.trySend(10).status());
+        assertEquals(BoundedChannel.SendStatus.DROPPED_OLDEST, dropOldest.trySend(20).status());
+        dropOldest.close();
+        assertEquals(20, dropOldest.receive());
     }
 }

@@ -88,23 +88,31 @@ final class BoundedChannel<T> {
      * Enqueues a non-null item while reporting both the overflow outcome and time spent blocked on backpressure.
      */
     SendResult sendTimed(T item) throws InterruptedException {
+        return sendInternal(item, true);
+    }
+
+    /**
+     * Attempts to enqueue a non-null item without blocking under {@link OverflowPolicy#BLOCK}.
+     *
+     * @return the {@link SendResult}, or {@code null} if {@link OverflowPolicy#BLOCK} is active and the buffer is full
+     */
+    SendResult trySend(T item) throws InterruptedException {
+        return sendInternal(item, false);
+    }
+
+    private SendResult sendInternal(T item, boolean allowBlock) throws InterruptedException {
         Objects.requireNonNull(item, "Null items are not allowed in pipeline channels");
         long blockedNanos = 0L;
         lock.lockInterruptibly();
         try {
-            if (aborted) {
-                throw new PipeAbortedException(abortCause);
-            }
-            if (draining) {
-                throw new PipeDrainingException();
-            }
-            if (closed) {
-                throw new IllegalStateException("Cannot send to a closed channel");
-            }
+            checkSendState();
 
             if (buffer.size() == capacity) {
                 switch (overflowPolicy) {
                     case BLOCK -> {
+                        if (!allowBlock) {
+                            return null;
+                        }
                         while (buffer.size() == capacity && !aborted && !closed && !draining) {
                             long waitStart = System.nanoTime();
                             notFull.await();
@@ -112,15 +120,7 @@ final class BoundedChannel<T> {
                             blockedNanos += delta;
                             sendWaitNanos.add(delta);
                         }
-                        if (aborted) {
-                            throw new PipeAbortedException(abortCause);
-                        }
-                        if (draining) {
-                            throw new PipeDrainingException();
-                        }
-                        if (closed) {
-                            throw new IllegalStateException("Cannot send to a closed channel");
-                        }
+                        checkSendState();
                     }
                     case DROP_OLDEST -> {
                         buffer.removeFirst();
@@ -147,6 +147,18 @@ final class BoundedChannel<T> {
             return new SendResult(SendStatus.ENQUEUED, blockedNanos);
         } finally {
             lock.unlock();
+        }
+    }
+
+    private void checkSendState() {
+        if (aborted) {
+            throw new PipeAbortedException(abortCause);
+        }
+        if (draining) {
+            throw new PipeDrainingException();
+        }
+        if (closed) {
+            throw new IllegalStateException("Cannot send to a closed channel");
         }
     }
 
@@ -232,22 +244,25 @@ final class BoundedChannel<T> {
                 return false;
             }
 
-            int drained = drainInto(target, maxSize);
+            if (drainInto(target, maxSize) > 0) {
+                notFull.signalAll();
+            }
             if (target.size() < maxSize && !closed && !aborted && maxWaitNanos > 0L) {
                 long remaining = maxWaitNanos;
                 while (target.size() < maxSize && remaining > 0L && !closed && !aborted) {
                     if (!buffer.isEmpty()) {
-                        drained += drainInto(target, maxSize);
+                        if (drainInto(target, maxSize) > 0) {
+                            notFull.signalAll();
+                        }
                         continue;
                     }
                     remaining = notEmpty.awaitNanos(remaining);
                 }
                 if (!buffer.isEmpty() && target.size() < maxSize && !aborted) {
-                    drained += drainInto(target, maxSize);
+                    if (drainInto(target, maxSize) > 0) {
+                        notFull.signalAll();
+                    }
                 }
-            }
-            if (drained > 0) {
-                notFull.signalAll();
             }
             if (aborted) {
                 throw new PipeAbortedException(abortCause);
