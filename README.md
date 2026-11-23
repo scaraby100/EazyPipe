@@ -28,6 +28,57 @@ EazyPipe lets you compose producer, transformation, fan-out, and consumer stages
 
 ---
 
+## Installation (`2.0.0-RC1` — GitHub Release & Local)
+
+While pre-release builds are distributed outside Maven Central, you can download the JAR directly from [GitHub Releases (`v2.0.0-RC1`)](https://github.com/jucasoft/EazyPipe/releases/tag/v2.0.0-RC1) and use it locally in any Maven or Gradle project.
+
+### Option A — Download Release JARs and install into local Maven (`~/.m2`)
+
+Download `EazyPipe-2.0.0-RC1.jar`, `EazyPipe-2.0.0-RC1-sources.jar`, `EazyPipe-2.0.0-RC1-javadoc.jar`, and `EazyPipe-2.0.0-RC1.pom` from the release page, verify `SHA256SUMS.txt` if desired, and install them once:
+
+```bash
+mvn install:install-file \
+  -Dfile=EazyPipe-2.0.0-RC1.jar \
+  -Dsources=EazyPipe-2.0.0-RC1-sources.jar \
+  -Djavadoc=EazyPipe-2.0.0-RC1-javadoc.jar \
+  -DpomFile=EazyPipe-2.0.0-RC1.pom
+```
+
+Then add the dependency in your `pom.xml`:
+
+```xml
+<dependency>
+    <groupId>xyz.scarabya</groupId>
+    <artifactId>EazyPipe</artifactId>
+    <version>2.0.0-RC1</version>
+</dependency>
+```
+
+**Gradle (Kotlin DSL) — using `mavenLocal()` or a local JAR in `libs/`:**
+
+```kotlin
+repositories {
+    mavenLocal()
+    mavenCentral()
+}
+
+dependencies {
+    implementation("xyz.scarabya:EazyPipe:2.0.0-RC1")
+    // Or drop EazyPipe-2.0.0-RC1.jar directly into libs/:
+    // implementation(files("libs/EazyPipe-2.0.0-RC1.jar"))
+}
+```
+
+### Option B — Build & install directly from source
+
+```bash
+git clone https://github.com/jucasoft/EazyPipe.git
+cd EazyPipe
+./mvnw -B clean install        # Windows PowerShell: .\mvnw.cmd -B clean install
+```
+
+---
+
 ## Quick Start
 
 ```java
