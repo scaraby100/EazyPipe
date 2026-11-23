@@ -171,28 +171,28 @@ Confronto trasparente di throughput, latenza p95/p99 e allocazione per item cont
 ## 6. Roadmap Esecutiva verso `2.0.0` (Maven Central & Adozione)
 
 ### Fase 1 — `v2.0.0-RC1`: Correttezza Core & Telemetria *(Priorità Immediata)*
-- [ ] Fix `BoundedChannel.receiveBatch()` (`notFull.signalAll()` immediato al drain).
-- [ ] Unificazione `PipeConfig.cpuBudget` / `AdaptiveConfig.cpuBudget` e applicazione statica del budget CPU.
-- [ ] Normalizzazione wait ratio e decay/finestra mobile della baseline Vegas in `StageTelemetry`.
-- [ ] Refactor chiavi `CpuBudgetAllocator` da `stageName` a `stageIndex`/ID univoco.
-- [ ] Telemetria e semantica corretta per `tee` e `broadcast` (eliminazione `dummyTelemetry`).
-- [ ] Fix `TokenBucketRateLimiter` (refill privo di deriva + burst) e allineamento propagazione `Error`.
-- [ ] Pool CPU condiviso dimensionato sul budget + guardia/documentazione `ExecutorMode.CUSTOM`.
-- [ ] Test di regressione dedicati per ogni bug risolto.
+- [x] Fix `BoundedChannel.receiveBatch()` (`notFull.signalAll()` immediato al drain).
+- [x] Unificazione `PipeConfig.cpuBudget` / `AdaptiveConfig.cpuBudget` e applicazione statica del budget CPU.
+- [x] Normalizzazione wait ratio e decay/finestra mobile della baseline Vegas in `StageTelemetry`.
+- [x] Refactor chiavi `CpuBudgetAllocator` da `stageName` a `stageIndex`/ID univoco.
+- [x] Telemetria e semantica corretta per `tee` e `broadcast` (eliminazione `dummyTelemetry`).
+- [x] Fix `TokenBucketRateLimiter` (refill privo di deriva + burst) e allineamento propagazione `Error`.
+- [x] Pool CPU condiviso dimensionato sul budget + guardia/documentazione `ExecutorMode.CUSTOM`.
+- [x] Test di regressione dedicati per ogni bug risolto.
 
 ### Fase 2 — `v2.0.0-RC2`: Adaptive Engine Gen-2 & Micro-API
-- [ ] Stima EMA del fan-out $f_i$ / flusso relativo $r_i$ e `CpuBudgetAllocator` fan-out aware.
-- [ ] Downstream Propagation Brake in 1 tick da valle a monte.
-- [ ] Isteresi reale (Schmitt Trigger) + cablaggio effettivo `deadbandLow`/`deadbandHigh`.
-- [ ] Segnale retry in `IoConcurrencyLimiter` + gradient check.
-- [ ] Preset `AdaptiveConfig` (`balanced`, `throughput`, `lowLatency`) e `.adaptive()` su `Pipeline<T>`.
-- [ ] `ScalingDecision` esplicativo + `PipelineMetricsSnapshot.summary()`.
-- [ ] Scomposizione di `PipelineRuntime.java` e chiusura package interni in `module-info.java`.
+- [x] Stima EMA del fan-out $f_i$ / flusso relativo $r_i$ e `CpuBudgetAllocator` fan-out aware.
+- [x] Downstream Propagation Brake in 1 tick da valle a monte.
+- [x] Isteresi reale (Schmitt Trigger) + cablaggio effettivo `deadbandLow`/`deadbandHigh`.
+- [x] Segnale retry in `IoConcurrencyLimiter` + gradient check.
+- [x] Preset `AdaptiveConfig` (`balanced`, `throughput`, `lowLatency`) e `.adaptive()` su `Pipeline<T>`.
+- [x] `ScalingDecision` esplicativo + `PipelineMetricsSnapshot.summary()`.
+- [x] Scomposizione di `PipelineRuntime.java` e chiusura package interni in `module-info.java`.
 
 ### Fase 3 — `v2.0.0-RC3`: Proof of Value & Benchmark
-- [ ] Creazione modulo `eazypipe-benchmarks` (JMH + 5 scenari dinamici end-to-end).
-- [ ] Esecuzione test di soak (5M–10M item, `-Xmx64m`) e verifica zero thread/memory leak.
-- [ ] Pubblicazione di tabelle e grafici reali nel `README.md` (con istruzioni per riprodurli in locale).
+- [x] Creazione modulo `eazypipe-benchmarks` (JMH + 5 scenari dinamici end-to-end).
+- [x] Esecuzione test di soak (5M–10M item, `-Xmx64m`) e verifica zero thread/memory leak.
+- [x] Pubblicazione di tabelle e grafici reali nel `README.md` (con istruzioni per riprodurli in locale).
 
 ### Fase 4 — `v2.0.0`: Release su Maven Central & Lancio
 - [ ] Valutazione `artifactId` minuscolo (`eazypipe` vs `EazyPipe`) prima di congelare le coordinate `2.0.0`.
