@@ -28,23 +28,23 @@ EazyPipe lets you compose producer, transformation, fan-out, and consumer stages
 
 ---
 
-## Installation (`2.0.0-RC1` — GitHub Release & Local Maven)
+## Installation (GitHub Releases & Local Maven)
 
-Pre-release builds are distributed via [GitHub Releases (`v2.0.0-RC1`)](https://github.com/jucasoft/EazyPipe/releases/tag/v2.0.0-RC1) so you can use EazyPipe in any **Java 21+ Maven project** without waiting for Maven Central publishing.
+Until artifacts are published to Maven Central, EazyPipe can be used directly in any **Java 21+ Maven project** either from a release bundle on [GitHub Releases](https://github.com/scaraby100/EazyPipe/releases) or by building `2.0.0-SNAPSHOT` from source.
 
-### GitHub Release & Downloadable Artifacts
+### GitHub Release Artifacts (`v*` tags)
 
-Every `v*` tag triggers [`.github/workflows/release.yml`](.github/workflows/release.yml), which compiles the module on Java 21, runs the full test suite, and attaches the release bundle (`pre-release` when the tag includes a suffix such as `-RC1`):
+Every `v*` tag triggers [`.github/workflows/release.yml`](.github/workflows/release.yml), which compiles on Java 21, runs the full test suite, and attaches the release bundle (`pre-release` for tags containing a suffix such as `v2.0.0-RC1`):
 
-- `EazyPipe-2.0.0-RC1.jar` — JPMS library JAR (`module xyz.scarabya.eazypipe`, `requires java.base`, exporting `xyz.scarabya.eazypipe`, `xyz.scarabya.eazypipe.adaptive`, and `xyz.scarabya.eazypipe.metrics`; internal engine encapsulated in `xyz.scarabya.eazypipe.internal.adaptive`)
-- `EazyPipe-2.0.0-RC1-sources.jar` — Java sources for IDE navigation/debugging
-- `EazyPipe-2.0.0-RC1-javadoc.jar` — Compiled Javadoc archive
-- `EazyPipe-2.0.0-RC1.pom` — Project POM metadata (`xyz.scarabya:EazyPipe:2.0.0-RC1`)
+- `EazyPipe-<version>.jar` — JPMS library JAR (`module xyz.scarabya.eazypipe`, `requires java.base`, exporting `xyz.scarabya.eazypipe`, `xyz.scarabya.eazypipe.adaptive`, and `xyz.scarabya.eazypipe.metrics`; internal engine encapsulated in `xyz.scarabya.eazypipe.internal.adaptive`)
+- `EazyPipe-<version>-sources.jar` — Java sources for IDE navigation/debugging
+- `EazyPipe-<version>-javadoc.jar` — Compiled Javadoc archive
+- `EazyPipe-<version>.pom` — Project POM metadata (`xyz.scarabya:EazyPipe`)
 - `SHA256SUMS.txt` — SHA-256 checksums for all attached artifacts
 
-### Option A — Download Release JARs and install into local Maven (`~/.m2`)
+### Option A — Download a Release Bundle and install into local Maven (`~/.m2`)
 
-Download the 4 artifact files (and `SHA256SUMS.txt`) from [v2.0.0-RC1](https://github.com/jucasoft/EazyPipe/releases/tag/v2.0.0-RC1), optionally verify checksums (`sha256sum -c SHA256SUMS.txt` on Linux/macOS or `Get-FileHash -Algorithm SHA256` on PowerShell), and install them once into your local Maven repository:
+Download the 4 artifact files and `SHA256SUMS.txt` from [GitHub Releases](https://github.com/scaraby100/EazyPipe/releases) (e.g., `2.0.0-RC1`), optionally verify checksums (`sha256sum -c SHA256SUMS.txt` on Linux/macOS or `Get-FileHash -Algorithm SHA256` on PowerShell), and install them once into your local Maven repository:
 
 **Linux / macOS:**
 ```bash
@@ -82,15 +82,15 @@ module com.example.myapp {
 }
 ```
 
-### Option B — Build & install directly from source (Maven Wrapper)
+### Option B — Build & install `2.0.0-SNAPSHOT` directly from source (Maven Wrapper)
 
 ```bash
-git clone https://github.com/jucasoft/EazyPipe.git
+git clone https://github.com/scaraby100/EazyPipe.git
 cd EazyPipe
 ./mvnw -B clean install        # Windows PowerShell: .\mvnw.cmd -B clean install
 ```
 
-This runs the JUnit 5 suite and installs `EazyPipe-2.0.0-RC1.jar`, `-sources.jar`, `-javadoc.jar`, and `.pom` into `~/.m2/repository/xyz/scarabya/EazyPipe/2.0.0-RC1/`.
+This runs the JUnit 5 suite and installs `EazyPipe-2.0.0-SNAPSHOT.jar`, `-sources.jar`, `-javadoc.jar`, and `.pom` into `~/.m2/repository/xyz/scarabya/EazyPipe/2.0.0-SNAPSHOT/`. Use `<version>2.0.0-SNAPSHOT</version>` in your `pom.xml`.
 
 ---
 
@@ -239,6 +239,7 @@ EazyPipe 2.0 focuses on **end-to-end auto-balancing** across heterogeneous CPU/I
 
 ---
 
-## License
+## Credits & License
 
+Originally created by **Alessandro Patriarca ([scaraby100](https://github.com/scaraby100))**.  
 Licensed under the **Apache License, Version 2.0**. See [LICENSE](LICENSE) for full details.
