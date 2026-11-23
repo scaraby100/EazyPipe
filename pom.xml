@@ -11,7 +11,7 @@
 
     <name>EazyPipe</name>
     <description>Modern, type-safe, backpressured concurrent pipeline library for Java 21+ with Virtual Threads.</description>
-    <url>https://github.com/jucasoft/EazyPipe</url>
+    <url>https://github.com/scaraby100/EazyPipe</url>
 
     <licenses>
         <license>
@@ -20,6 +20,24 @@
             <distribution>repo</distribution>
         </license>
     </licenses>
+
+    <scm>
+        <connection>scm:git:https://github.com/scaraby100/EazyPipe.git</connection>
+        <developerConnection>scm:git:ssh://git@github.com:scaraby100/EazyPipe.git</developerConnection>
+        <url>https://github.com/scaraby100/EazyPipe</url>
+    </scm>
+
+    <developers>
+        <developer>
+            <id>scaraby100</id>
+            <name>Alessandro Patriarca</name>
+            <url>https://github.com/scaraby100</url>
+            <roles>
+                <role>Creator</role>
+                <role>Lead Developer</role>
+            </roles>
+        </developer>
+    </developers>
 
     <properties>
         <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
@@ -67,8 +85,37 @@
                 <artifactId>maven-surefire-plugin</artifactId>
                 <version>3.6.1</version>
                 <configuration>
-                    <argLine>--add-opens xyz.scarabya.eazypipe/xyz.scarabya.eazypipe=ALL-UNNAMED --add-opens xyz.scarabya.eazypipe/xyz.scarabya.eazypipe.adaptive=ALL-UNNAMED --add-opens xyz.scarabya.eazypipe/xyz.scarabya.eazypipe.metrics=ALL-UNNAMED --add-reads xyz.scarabya.eazypipe=ALL-UNNAMED</argLine>
+                    <argLine>--add-opens xyz.scarabya.eazypipe/xyz.scarabya.eazypipe=ALL-UNNAMED --add-opens xyz.scarabya.eazypipe/xyz.scarabya.eazypipe.adaptive=ALL-UNNAMED --add-opens xyz.scarabya.eazypipe/xyz.scarabya.eazypipe.internal.adaptive=ALL-UNNAMED --add-opens xyz.scarabya.eazypipe/xyz.scarabya.eazypipe.metrics=ALL-UNNAMED --add-reads xyz.scarabya.eazypipe=ALL-UNNAMED</argLine>
                 </configuration>
+            </plugin>
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-source-plugin</artifactId>
+                <version>3.4.0</version>
+                <executions>
+                    <execution>
+                        <id>attach-sources</id>
+                        <goals>
+                            <goal>jar-no-fork</goal>
+                        </goals>
+                    </execution>
+                </executions>
+            </plugin>
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-javadoc-plugin</artifactId>
+                <version>3.12.0</version>
+                <configuration>
+                    <doclint>all,-missing</doclint>
+                </configuration>
+                <executions>
+                    <execution>
+                        <id>attach-javadocs</id>
+                        <goals>
+                            <goal>jar</goal>
+                        </goals>
+                    </execution>
+                </executions>
             </plugin>
         </plugins>
     </build>

@@ -56,9 +56,13 @@ public record PipeConfig(
     public enum ExecutorMode {
         /** One Java 21 virtual thread per stage worker (default). */
         VIRTUAL_THREADS,
-        /** One daemon platform thread per stage worker. */
+        /** One daemon platform thread per source worker; processing stages run on the shared CPU pool. */
         PLATFORM_THREADS,
-        /** Caller-provided {@link ExecutorService}; never shut down by EazyPipe. */
+        /**
+         * Caller-provided {@link ExecutorService}; never shut down by EazyPipe.
+         * When supplying a bounded pool, ensure its maximum thread count is at least the sum of
+         * {@code maxConcurrency} across all {@link StageKind#INHERIT} stages to avoid starvation deadlock.
+         */
         CUSTOM
     }
 
@@ -152,11 +156,36 @@ public record PipeConfig(
      * Returns a configuration that submits worker tasks to the given {@link ExecutorService}.
      * EazyPipe does not shut down custom executors when a pipeline finishes.
      *
+     * <p>Bounded custom executors must allow at least as many concurrent threads as the total
+     * {@code maxConcurrency} of all {@link StageKind#INHERIT} stages to prevent starvation deadlocks.
+     *
      * @param customExecutor the executor to use (must not be {@code null})
      * @return a custom-executor {@link PipeConfig}
      */
     public static PipeConfig withExecutor(ExecutorService customExecutor) {
         return builder().customExecutor(customExecutor).build();
+    }
+
+    /**
+     * Returns a copy of this configuration with {@code adaptiveConfig} applied.
+     * If {@code adaptiveConfig.cpuBudget() > 0}, it overrides this configuration's {@code cpuBudget}.
+     *
+     * @param adaptiveConfig the adaptive configuration to apply (must not be {@code null})
+     * @return a new {@link PipeConfig}
+     */
+    public PipeConfig withAdaptive(AdaptiveConfig adaptiveConfig) {
+        Objects.requireNonNull(adaptiveConfig, "adaptiveConfig must not be null");
+        int resolvedBudget = adaptiveConfig.cpuBudget() > 0 ? adaptiveConfig.cpuBudget() : this.cpuBudget;
+        return new PipeConfig(
+                defaultBufferCapacity,
+                executorMode,
+                customExecutor,
+                errorStrategy,
+                errorHandler,
+                resolvedBudget,
+                adaptiveConfig,
+                contextPropagator,
+                metricsListener);
     }
 
     /**
@@ -224,7 +253,7 @@ public record PipeConfig(
 
         public Builder adaptive(AdaptiveConfig adaptiveConfig) {
             this.adaptiveConfig = Objects.requireNonNull(adaptiveConfig, "adaptiveConfig must not be null");
-            if (!cpuBudgetExplicit && adaptiveConfig.enabled()) {
+            if (!cpuBudgetExplicit && adaptiveConfig.cpuBudget() > 0) {
                 this.cpuBudget = adaptiveConfig.cpuBudget();
             }
             return this;

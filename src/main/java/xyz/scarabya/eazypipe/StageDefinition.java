@@ -77,11 +77,14 @@ sealed interface StageDefinition
         }
     }
 
-    record RateLimitStage<I>(StageConfig config, double permitsPerSecond) implements StageDefinition {
+    record RateLimitStage<I>(StageConfig config, double permitsPerSecond, int burst) implements StageDefinition {
         public RateLimitStage {
             Objects.requireNonNull(config, "config must not be null");
             if (Double.isNaN(permitsPerSecond) || Double.isInfinite(permitsPerSecond) || permitsPerSecond <= 0.0) {
                 throw new IllegalArgumentException("permitsPerSecond must be positive and finite");
+            }
+            if (burst < 1) {
+                throw new IllegalArgumentException("burst must be >= 1, got " + burst);
             }
         }
     }

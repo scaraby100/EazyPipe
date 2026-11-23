@@ -25,6 +25,7 @@ import java.time.Duration;
 import java.util.List;
 import java.util.Optional;
 import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
@@ -32,6 +33,7 @@ import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.LongAdder;
 import org.junit.jupiter.api.Test;
+import xyz.scarabya.eazypipe.adaptive.AdaptiveConfig;
 
 class EazyPipeResilienceTest {
 
@@ -242,5 +244,101 @@ class EazyPipeResilienceTest {
 
         assertEquals(1, attempts.get());
         assertTrue(ex.getCause() instanceof IllegalArgumentException);
+    }
+
+    @Test
+    void staticCpuBudgetLimitsConcurrentExecutionEvenWhenAdaptiveIsDisabled() {
+        PipeConfig cfg = PipeConfig.builder()
+                .cpuBudget(2)
+                .adaptive(AdaptiveConfig.disabled())
+                .build();
+
+        AtomicInteger active = new AtomicInteger();
+        AtomicInteger maxObserved = new AtomicInteger();
+
+        List<Integer> out = EazyPipe.fromIterable(java.util.stream.IntStream.range(0, 24).boxed().toList())
+                .configure(cfg)
+                .map(StageConfig.cpuBound("cpu-capped").concurrency(6, 6, 6).build(), n -> {
+                    int now = active.incrementAndGet();
+                    maxObserved.accumulateAndGet(now, Math::max);
+                    try {
+                        Thread.sleep(10);
+                    } finally {
+                        active.decrementAndGet();
+                    }
+                    return n;
+                })
+                .toList();
+
+        assertEquals(24, out.size());
+        assertTrue(maxObserved.get() <= 2,
+                "Expected max concurrent CPU executions <= 2, observed " + maxObserved.get());
+    }
+
+    @Test
+    void multipleCpuStagesShareGlobalCpuWorkerPoolBoundedByBudget() {
+        PipeConfig cfg = PipeConfig.builder()
+                .cpuBudget(2)
+                .build();
+
+        Set<String> cpuThreadNames = ConcurrentHashMap.newKeySet();
+        AtomicInteger activeTotal = new AtomicInteger();
+        AtomicInteger maxObservedTotal = new AtomicInteger();
+
+        StageConfig cpuCfg = StageConfig.cpuBound()
+                .concurrency(1, 16, 16)
+                .build();
+
+        List<Integer> out = EazyPipe.fromIterable(java.util.stream.IntStream.range(0, 20).boxed().toList())
+                .configure(cfg)
+                .map(cpuCfg, n -> recordCpuWork(cpuThreadNames, activeTotal, maxObservedTotal, n + 1))
+                .map(cpuCfg, n -> recordCpuWork(cpuThreadNames, activeTotal, maxObservedTotal, n + 1))
+                .map(cpuCfg, n -> recordCpuWork(cpuThreadNames, activeTotal, maxObservedTotal, n + 1))
+                .toList();
+
+        assertEquals(20, out.size());
+        assertTrue(maxObservedTotal.get() <= 2,
+                "Expected global CPU concurrency <= 2, observed " + maxObservedTotal.get());
+        assertTrue(!cpuThreadNames.isEmpty() && cpuThreadNames.size() <= 2,
+                "Expected <= 2 distinct eazypipe-cpu-* threads, saw " + cpuThreadNames);
+        assertTrue(cpuThreadNames.stream().allMatch(name -> name.startsWith("eazypipe-cpu-")));
+    }
+
+    private static int recordCpuWork(
+            Set<String> threadNames,
+            AtomicInteger activeTotal,
+            AtomicInteger maxObservedTotal,
+            int value) throws InterruptedException {
+        threadNames.add(Thread.currentThread().getName());
+        int now = activeTotal.incrementAndGet();
+        maxObservedTotal.accumulateAndGet(now, Math::max);
+        try {
+            Thread.sleep(5);
+        } finally {
+            activeTotal.decrementAndGet();
+        }
+        return value;
+    }
+
+    @Test
+    void pipeConfigCpuBudgetPrecedenceBetweenExplicitAndAdaptiveOverride() {
+        int defaultBudget = Math.max(1, Runtime.getRuntime().availableProcessors());
+        AdaptiveConfig inheritAdaptive = AdaptiveConfig.defaults();
+        AdaptiveConfig overrideFour = AdaptiveConfig.builder().cpuBudget(4).build();
+        AdaptiveConfig disabledWithSix = AdaptiveConfig.builder().enabled(false).cpuBudget(6).build();
+
+        assertEquals(0, inheritAdaptive.cpuBudget());
+        assertEquals(defaultBudget, PipeConfig.builder().adaptive(inheritAdaptive).build().cpuBudget());
+        assertEquals(4, PipeConfig.builder().adaptive(overrideFour).build().cpuBudget());
+        assertEquals(6, PipeConfig.builder().adaptive(disabledWithSix).build().cpuBudget());
+
+        // Explicit PipeConfig.cpuBudget always wins over AdaptiveConfig override regardless of builder call order.
+        assertEquals(2, PipeConfig.builder().cpuBudget(2).adaptive(overrideFour).build().cpuBudget());
+        assertEquals(2, PipeConfig.builder().adaptive(overrideFour).cpuBudget(2).build().cpuBudget());
+
+        // withAdaptive applies adaptive override when > 0, otherwise preserves PipeConfig.cpuBudget.
+        PipeConfig baseTwo = PipeConfig.builder().cpuBudget(2).build();
+        assertEquals(2, baseTwo.withAdaptive(inheritAdaptive).cpuBudget());
+        assertEquals(4, baseTwo.withAdaptive(overrideFour).cpuBudget());
     }
 }

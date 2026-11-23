@@ -1,5 +1,7 @@
 /nb-configuration.xml
 /target/
+/eazypipe-benchmarks/target/
+/GEMINI.md
 .idea/
 *.iml
 .vscode/

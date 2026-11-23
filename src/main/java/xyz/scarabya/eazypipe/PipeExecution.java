@@ -54,6 +54,9 @@ public final class PipeExecution<R> implements AutoCloseable {
     /**
      * Waits for the pipeline to complete and returns its terminal result.
      *
+     * <p>Any {@link Error} thrown by a stage is rethrown as-is (with stage context attached as a
+     * suppressed {@link PipeException}).
+     *
      * @return the terminal result (or {@code null} for {@code Void} runs)
      * @throws InterruptedException if the current thread is interrupted while waiting
      * @throws PipeException if any pipeline stage failed
@@ -69,6 +72,8 @@ public final class PipeExecution<R> implements AutoCloseable {
 
     /**
      * Waits at most the given duration for the pipeline to complete and returns its terminal result.
+     *
+     * <p>Any {@link Error} thrown by a stage is rethrown as-is.
      *
      * @param timeout maximum time to wait (must not be {@code null})
      * @return the terminal result (or {@code null} for {@code Void} runs)
@@ -92,6 +97,8 @@ public final class PipeExecution<R> implements AutoCloseable {
     /**
      * Waits for completion (wrapping {@link InterruptedException} into {@link PipeException}
      * while preserving the thread's interrupt flag) and returns the terminal result.
+     *
+     * <p>Any {@link Error} thrown by a stage is rethrown as-is.
      *
      * @return the terminal result (or {@code null} for {@code Void} runs)
      * @throws PipeException if any pipeline stage failed or the calling thread was interrupted

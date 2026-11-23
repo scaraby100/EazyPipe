@@ -1,0 +1,61 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up JDK 21
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+          cache: maven
+
+      - name: Build, verify and package artifacts
+        run: chmod +x ./mvnw && ./mvnw -B clean verify
+
+      - name: Prepare release assets
+        run: |
+          VERSION=$(./mvnw -q -DforceStdout help:evaluate -Dexpression=project.version)
+          mkdir -p release-assets
+          cp "target/EazyPipe-${VERSION}.jar" release-assets/
+          cp "target/EazyPipe-${VERSION}-sources.jar" release-assets/
+          cp "target/EazyPipe-${VERSION}-javadoc.jar" release-assets/
+          cp pom.xml "release-assets/EazyPipe-${VERSION}.pom"
+          (cd release-assets && sha256sum EazyPipe-* > SHA256SUMS.txt)
+          ls -lh release-assets
+
+      - name: Publish GitHub Release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          TAG="${{ github.ref_name }}"
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            VERSION=$(./mvnw -q -DforceStdout help:evaluate -Dexpression=project.version)
+            TAG="v${VERSION}"
+          fi
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            gh release upload "$TAG" release-assets/* --clobber
+          else
+            PRERELEASE_FLAG=""
+            if [[ "$TAG" == *-* ]]; then
+              PRERELEASE_FLAG="--prerelease"
+            fi
+            gh release create "$TAG" release-assets/* \
+              --title "EazyPipe $TAG" \
+              --generate-notes \
+              $PRERELEASE_FLAG
+          fi

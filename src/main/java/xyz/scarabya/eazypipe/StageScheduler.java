@@ -36,11 +36,11 @@ final class StageScheduler {
         this.customExecutor = config.customExecutor();
     }
 
-    Future<?> submit(StageKind configuredKind, Runnable task) {
-        return executorFor(configuredKind).submit(task);
+    Future<?> submit(StageKind configuredKind, boolean isSource, Runnable task) {
+        return executorFor(configuredKind, isSource).submit(task);
     }
 
-    private ExecutorService executorFor(StageKind configuredKind) {
+    private ExecutorService executorFor(StageKind configuredKind, boolean isSource) {
         if (configuredKind == StageKind.INHERIT && globalMode == PipeConfig.ExecutorMode.CUSTOM) {
             return customExecutor;
         }
@@ -50,28 +50,35 @@ final class StageScheduler {
                         ? StageKind.IO_BOUND
                         : StageKind.CPU_BOUND);
 
-        if (effective == StageKind.IO_BOUND) {
-            ExecutorService exec = virtualExecutor;
-            if (exec == null) {
-                synchronized (lock) {
-                    exec = virtualExecutor;
-                    if (exec == null) {
-                        exec = Executors.newThreadPerTaskExecutor(
-                                Thread.ofVirtual().name("eazypipe-vt-", 0).factory());
-                        virtualExecutor = exec;
-                    }
+        if (effective == StageKind.CPU_BOUND && isSource) {
+            return getOrCreateCpuPlatformExecutor();
+        }
+        return getOrCreateVirtualExecutor();
+    }
+
+    private ExecutorService getOrCreateVirtualExecutor() {
+        ExecutorService exec = virtualExecutor;
+        if (exec == null) {
+            synchronized (lock) {
+                exec = virtualExecutor;
+                if (exec == null) {
+                    exec = Executors.newThreadPerTaskExecutor(
+                            Thread.ofVirtual().name("eazypipe-vt-", 0).factory());
+                    virtualExecutor = exec;
                 }
             }
-            return exec;
         }
+        return exec;
+    }
 
+    private ExecutorService getOrCreateCpuPlatformExecutor() {
         ExecutorService exec = cpuPlatformExecutor;
         if (exec == null) {
             synchronized (lock) {
                 exec = cpuPlatformExecutor;
                 if (exec == null) {
                     exec = Executors.newThreadPerTaskExecutor(
-                            Thread.ofPlatform().name("eazypipe-cpu-", 0).daemon(true).factory());
+                            Thread.ofPlatform().name("eazypipe-src-cpu-", 0).daemon(true).factory());
                     cpuPlatformExecutor = exec;
                 }
             }

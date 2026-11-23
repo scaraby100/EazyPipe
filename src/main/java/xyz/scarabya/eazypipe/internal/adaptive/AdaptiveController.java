@@ -13,14 +13,13 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-package xyz.scarabya.eazypipe.adaptive;
+package xyz.scarabya.eazypipe.internal.adaptive;
 
 import java.time.Duration;
 import java.time.Instant;
 import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.List;
-import java.util.Map;
 import java.util.Objects;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
@@ -30,6 +29,9 @@ import java.util.function.IntConsumer;
 import java.util.function.IntSupplier;
 import java.util.function.LongSupplier;
 import xyz.scarabya.eazypipe.StageKind;
+import xyz.scarabya.eazypipe.adaptive.AdaptiveConfig;
+import xyz.scarabya.eazypipe.adaptive.ScalingDecision;
+import xyz.scarabya.eazypipe.adaptive.StageState;
 import xyz.scarabya.eazypipe.metrics.PipelineMetricsListener;
 import xyz.scarabya.eazypipe.metrics.StageMetricsSnapshot;
 
@@ -42,9 +44,11 @@ public final class AdaptiveController {
     private static final int MAX_DECISION_HISTORY = 256;
 
     /**
-     * Public registration descriptor connecting a stage's telemetry and channel metrics to its permit target applier.
+     * Registration descriptor connecting a stage's telemetry and channel metrics to its permit target applier.
      */
     public record ManagedStage(
+            int stageIndex,
+            boolean controllable,
             String stageName,
             StageKind stageKind,
             int minConcurrency,
@@ -80,14 +84,19 @@ public final class AdaptiveController {
         private int consecutiveTicks;
         private Instant lastScaledAt;
         private StageTelemetry.Snapshot lastSnapshot;
+        private double lastRelativeFlow;
+        private double throughputBeforeLastIncrease = Double.NaN;
+        private int lastIncreaseStep;
 
         private StageRuntimeState(ManagedStage descriptor) {
             this.descriptor = descriptor;
             this.lastSnapshot = descriptor.telemetry().latestSnapshot();
+            this.lastRelativeFlow = descriptor.stageIndex() >= 0 ? 1.0 : Double.NaN;
         }
     }
 
     private final AdaptiveConfig config;
+    private final int cpuBudget;
     private final List<StageRuntimeState> stages;
     private final PipelineMetricsListener metricsListener;
     private final Object tickLock = new Object();
@@ -98,9 +107,14 @@ public final class AdaptiveController {
 
     public AdaptiveController(
             AdaptiveConfig config,
+            int cpuBudget,
             List<ManagedStage> stages,
             PipelineMetricsListener metricsListener) {
         this.config = Objects.requireNonNull(config, "config must not be null");
+        if (cpuBudget < 1) {
+            throw new IllegalArgumentException("cpuBudget must be >= 1, got " + cpuBudget);
+        }
+        this.cpuBudget = cpuBudget;
         Objects.requireNonNull(stages, "stages must not be null");
         this.metricsListener = metricsListener != null ? metricsListener : PipelineMetricsListener.noop();
         List<StageRuntimeState> list = new ArrayList<>(stages.size());
@@ -152,33 +166,46 @@ public final class AdaptiveController {
     public List<ScalingDecision> tick() {
         synchronized (tickLock) {
             Instant now = config.clock().instant();
-            long windowNanos = lastTickAt == null
-                    ? config.tickInterval().toNanos()
-                    : Duration.between(lastTickAt, now).toNanos();
-            if (windowNanos <= 0L) {
-                windowNanos = config.tickInterval().toNanos();
-            }
+            long windowNanos = resolveWindowNanos(now);
             lastTickAt = now;
 
-            StageState[] states = new StageState[stages.size()];
-            boolean[] persistent = new boolean[stages.size()];
-            boolean[] cooldownReady = new boolean[stages.size()];
+            AdaptiveConfig.Tuning tuning = config.tuning();
+            int n = stages.size();
+            String[] names = new String[n];
+            int[] stageIndices = new int[n];
+            StageKind[] kinds = new StageKind[n];
+            boolean[] hasOutput = new boolean[n];
+            StageState[] states = new StageState[n];
+            StageTelemetry.Snapshot[] snapshots = new StageTelemetry.Snapshot[n];
+            int[] currentTargets = new int[n];
+            boolean[] persistent = new boolean[n];
+            boolean[] cooldownReady = new boolean[n];
 
-            // 1. Sample telemetry for every stage and classify state.
-            for (int i = 0; i < stages.size(); i++) {
+            // 1. Sample telemetry and classify state for every stage.
+            for (int i = 0; i < n; i++) {
                 StageRuntimeState rs = stages.get(i);
                 ManagedStage d = rs.descriptor;
+                int target = d.currentTargetSupplier().getAsInt();
                 StageTelemetry.Snapshot snap = d.telemetry().sample(
                         windowNanos,
-                        config.emaAlpha(),
+                        tuning.emaAlpha(),
                         d.inputFillSupplier().getAsDouble(),
                         d.outputFillSupplier().getAsDouble(),
                         d.inputWaitNanosSupplier().getAsLong(),
                         d.outputWaitNanosSupplier().getAsLong(),
-                        d.droppedCountSupplier().getAsLong());
+                        d.droppedCountSupplier().getAsLong(),
+                        target,
+                        tuning.baselineDecay());
                 rs.lastSnapshot = snap;
-                StageState classified = d.telemetry().classify(snap, config, d.hasInput(), d.hasOutput());
+                StageState classified = d.telemetry().classify(snap, tuning, d.hasInput(), d.hasOutput(), rs.lastState);
+
+                names[i] = d.stageName();
+                stageIndices[i] = d.stageIndex();
+                kinds[i] = d.stageKind();
+                hasOutput[i] = d.hasOutput();
                 states[i] = classified;
+                snapshots[i] = snap;
+                currentTargets[i] = target;
 
                 if (classified == rs.lastState) {
                     rs.consecutiveTicks++;
@@ -186,12 +213,21 @@ public final class AdaptiveController {
                     rs.lastState = classified;
                     rs.consecutiveTicks = 1;
                 }
-
-                persistent[i] = rs.consecutiveTicks >= config.persistenceTicks();
+                if (classified != StageState.BOTTLENECK) {
+                    rs.throughputBeforeLastIncrease = Double.NaN;
+                    rs.lastIncreaseStep = 0;
+                }
+                persistent[i] = rs.consecutiveTicks >= tuning.persistenceTicks();
                 cooldownReady[i] = rs.lastScaledAt == null
-                        || Duration.between(rs.lastScaledAt, now).compareTo(config.cooldown()) >= 0;
+                        || Duration.between(rs.lastScaledAt, now).compareTo(tuning.cooldown()) >= 0;
+            }
 
-                metricsListener.onStageMetrics(toMetricsSnapshot(rs, classified));
+            TopologyAnalyzer.Analysis topology = TopologyAnalyzer.analyze(
+                    names, stageIndices, kinds, hasOutput, states, snapshots, currentTargets, tuning);
+            for (int i = 0; i < n; i++) {
+                StageRuntimeState rs = stages.get(i);
+                rs.lastRelativeFlow = topology.relativeFlows()[i];
+                metricsListener.onStageMetrics(toMetricsSnapshot(rs, states[i]));
             }
 
             if (!config.enabled()) {
@@ -199,72 +235,71 @@ public final class AdaptiveController {
             }
 
             List<ScalingDecision> emitted = new ArrayList<>();
+            boolean[] braked = topology.braked();
 
             // 2. Inspect IO_BOUND stages strictly from downstream to upstream.
-            for (int i = stages.size() - 1; i >= 0; i--) {
+            for (int i = n - 1; i >= 0; i--) {
                 StageRuntimeState rs = stages.get(i);
                 ManagedStage d = rs.descriptor;
-                if (!d.hasInput() || d.stageKind() != StageKind.IO_BOUND || d.minConcurrency() == d.maxConcurrency()) {
+                if (!d.controllable()
+                        || !d.hasInput()
+                        || d.stageKind() != StageKind.IO_BOUND
+                        || d.minConcurrency() == d.maxConcurrency()) {
                     continue;
                 }
-                if (!persistent[i] || !cooldownReady[i]) {
+                if (!(persistent[i] || braked[i]) || !cooldownReady[i]) {
                     continue;
                 }
 
-                int current = d.currentTargetSupplier().getAsInt();
-                StageTelemetry.Snapshot snap = rs.lastSnapshot;
+                int current = currentTargets[i];
+                StageTelemetry.Snapshot snap = snapshots[i];
                 IoConcurrencyLimiter.IoStageView view = new IoConcurrencyLimiter.IoStageView(
-                        d.stageName(),
-                        states[i],
-                        current,
-                        d.minConcurrency(),
-                        d.maxConcurrency(),
-                        snap.emaServiceNanos(),
-                        snap.baselineServiceNanos(),
-                        snap.emaErrorRate());
-                int next = IoConcurrencyLimiter.computeTarget(view, config);
-                if (next != current) {
-                    emitted.add(applyChange(rs, states[i], current, next, now, "IO AIMD/Vegas: " + states[i]));
+                        d.stageName(), states[i], current, d.minConcurrency(), d.maxConcurrency(),
+                        snap.emaServiceNanos(), snap.baselineServiceNanos(), snap.emaErrorRate(),
+                        snap.emaRetryRate(), braked[i], snap.emaThroughputPerSec(),
+                        rs.throughputBeforeLastIncrease, rs.lastIncreaseStep);
+                int next = IoConcurrencyLimiter.computeTarget(view, tuning);
+                if (next != current && !shouldSuppressIncrease(current, next, tuning.minRelativeChange())) {
+                    if (next > current) {
+                        rs.throughputBeforeLastIncrease = snap.emaThroughputPerSec();
+                        rs.lastIncreaseStep = next - current;
+                    } else {
+                        rs.throughputBeforeLastIncrease = Double.NaN;
+                        rs.lastIncreaseStep = 0;
+                    }
+                    String reason = braked[i] ? "Downstream brake: " + states[i] : "IO AIMD/Vegas: " + states[i];
+                    emitted.add(applyChange(rs, states[i], current, next, now, reason, topology, i));
                 }
             }
 
             // 3. Globally allocate CPU_BOUND budget across all CPU stages.
             List<CpuBudgetAllocator.CpuStageView> cpuViews = new ArrayList<>();
-            List<StageRuntimeState> cpuStages = new ArrayList<>();
-            List<StageState> cpuStates = new ArrayList<>();
-            for (int i = 0; i < stages.size(); i++) {
-                StageRuntimeState rs = stages.get(i);
-                ManagedStage d = rs.descriptor;
-                if (d.stageKind() == StageKind.CPU_BOUND && d.hasInput()) {
-                    cpuStages.add(rs);
-                    cpuStates.add(states[i]);
+            List<Integer> cpuStagePos = new ArrayList<>();
+            for (int i = 0; i < n; i++) {
+                ManagedStage d = stages.get(i).descriptor;
+                if (d.controllable() && d.stageKind() == StageKind.CPU_BOUND && d.hasInput()) {
+                    cpuStagePos.add(i);
                     cpuViews.add(new CpuBudgetAllocator.CpuStageView(
-                            d.stageName(),
-                            states[i],
-                            d.currentTargetSupplier().getAsInt(),
-                            d.minConcurrency(),
-                            d.maxConcurrency(),
-                            rs.lastSnapshot.emaServiceNanos(),
-                            cooldownReady[i],
-                            persistent[i]));
+                            d.stageName(), states[i], currentTargets[i],
+                            d.minConcurrency(), d.maxConcurrency(),
+                            snapshots[i].emaServiceNanos(), cooldownReady[i], persistent[i],
+                            topology.relativeFlows()[i], braked[i]));
                 }
             }
-
             if (!cpuViews.isEmpty()) {
-                Map<String, Integer> targets = CpuBudgetAllocator.allocate(config.cpuBudget(), cpuViews);
-                for (int i = cpuStages.size() - 1; i >= 0; i--) {
-                    StageRuntimeState rs = cpuStages.get(i);
+                int[] targets = CpuBudgetAllocator.allocate(cpuBudget, cpuViews);
+                for (int c = cpuStagePos.size() - 1; c >= 0; c--) {
+                    int pos = cpuStagePos.get(c);
+                    StageRuntimeState rs = stages.get(pos);
                     ManagedStage d = rs.descriptor;
-                    int current = d.currentTargetSupplier().getAsInt();
-                    int next = targets.getOrDefault(d.stageName(), current);
-                    if (next != current && d.minConcurrency() < d.maxConcurrency()) {
+                    int current = currentTargets[pos];
+                    int next = targets[c];
+                    if (next != current
+                            && d.minConcurrency() < d.maxConcurrency()
+                            && !shouldSuppressIncrease(current, next, tuning.minRelativeChange())) {
                         emitted.add(applyChange(
-                                rs,
-                                cpuStates.get(i),
-                                current,
-                                next,
-                                now,
-                                "CPU budget rebalance: " + cpuStates.get(i)));
+                                rs, states[pos], current, next, now,
+                                "CPU budget rebalance: " + states[pos], topology, pos));
                     }
                 }
             }
@@ -273,20 +308,41 @@ public final class AdaptiveController {
         }
     }
 
+    private long resolveWindowNanos(Instant now) {
+        long windowNanos = lastTickAt == null
+                ? config.tickInterval().toNanos()
+                : Duration.between(lastTickAt, now).toNanos();
+        return windowNanos > 0L ? windowNanos : config.tickInterval().toNanos();
+    }
+
+    private static boolean shouldSuppressIncrease(int current, int next, double minRelativeChange) {
+        if (next <= current || minRelativeChange <= 0.0) {
+            return false;
+        }
+        int minStep = (int) Math.ceil(current * minRelativeChange);
+        return (next - current) < minStep;
+    }
+
     private ScalingDecision applyChange(
             StageRuntimeState rs,
             StageState state,
             int previous,
             int next,
             Instant now,
-            String reason) {
+            String reason,
+            TopologyAnalyzer.Analysis topology,
+            int pos) {
         ManagedStage d = rs.descriptor;
         d.targetApplier().accept(next);
         rs.lastScaledAt = now;
         StageTelemetry.Snapshot snap = rs.lastSnapshot;
+        double latencyRatio = snap.baselineServiceNanos() > 0.0
+                ? snap.emaServiceNanos() / snap.baselineServiceNanos()
+                : 0.0;
         ScalingDecision decision = new ScalingDecision(
                 now,
                 d.stageName(),
+                d.stageIndex(),
                 d.stageKind(),
                 state,
                 previous,
@@ -294,7 +350,11 @@ public final class AdaptiveController {
                 reason,
                 snap.emaInputFill(),
                 snap.emaOutputFill(),
-                snap.emaServiceMillis());
+                snap.emaServiceMillis(),
+                latencyRatio,
+                topology.relativeFlows()[pos],
+                topology.dominantBottleneck(),
+                topology.downstreamStates()[pos]);
         if (decisionsHistory.size() >= MAX_DECISION_HISTORY) {
             decisionsHistory.removeFirst();
         }
@@ -327,6 +387,7 @@ public final class AdaptiveController {
         StageTelemetry.Snapshot snap = rs.lastSnapshot != null
                 ? rs.lastSnapshot
                 : d.telemetry().latestSnapshot();
+        boolean isMain = d.stageIndex() >= 0;
         return new StageMetricsSnapshot(
                 d.stageName(),
                 d.stageKind(),
@@ -339,6 +400,8 @@ public final class AdaptiveController {
                 snap.emaServiceMillis(),
                 snap.emaThroughputPerSec(),
                 snap.emaInputFill(),
-                snap.emaOutputFill());
+                snap.emaOutputFill(),
+                isMain ? snap.emaFanOut() : Double.NaN,
+                isMain ? rs.lastRelativeFlow : Double.NaN);
     }
 }

@@ -13,10 +13,12 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-package xyz.scarabya.eazypipe.adaptive;
+package xyz.scarabya.eazypipe.internal.adaptive;
 
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.LongAdder;
+import xyz.scarabya.eazypipe.adaptive.AdaptiveConfig;
+import xyz.scarabya.eazypipe.adaptive.StageState;
 
 /**
  * Low-overhead, lock-free per-stage telemetry collector computing exponential moving averages (EMA)
@@ -39,7 +41,9 @@ public final class StageTelemetry {
             double emaInputFill,
             double emaOutputFill,
             double emaInputWaitRatio,
-            double emaOutputWaitRatio) {
+            double emaOutputWaitRatio,
+            double emaFanOut,
+            double emaRetryRate) {
 
         public double emaServiceMillis() {
             return emaServiceNanos / 1_000_000.0;
@@ -49,6 +53,9 @@ public final class StageTelemetry {
     private final LongAdder completedItems = new LongAdder();
     private final LongAdder errorItems = new LongAdder();
     private final LongAdder serviceTimeNanos = new LongAdder();
+    private final LongAdder inputItems = new LongAdder();
+    private final LongAdder outputItems = new LongAdder();
+    private final LongAdder retryAttempts = new LongAdder();
     private final AtomicInteger activeWorkers = new AtomicInteger();
 
     private long prevCompleted;
@@ -56,8 +63,12 @@ public final class StageTelemetry {
     private long prevServiceNanos;
     private long prevInputWaitNanos;
     private long prevOutputWaitNanos;
+    private long prevInputItems;
+    private long prevOutputItems;
+    private long prevRetryAttempts;
     private boolean initialized;
     private boolean hasLatencySample;
+    private boolean hasFanOutSample;
 
     private double emaServiceNanos;
     private double baselineServiceNanos;
@@ -67,12 +78,29 @@ public final class StageTelemetry {
     private double emaOutputFill;
     private double emaInputWaitRatio;
     private double emaOutputWaitRatio;
-    private volatile Snapshot latestSnapshot = new Snapshot(0, 0, 0, 0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0);
+    private double emaFanOut = 1.0;
+    private double emaRetryRate;
+    private volatile Snapshot latestSnapshot =
+            new Snapshot(0, 0, 0, 0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0);
 
     /**
      * Creates a new empty stage telemetry collector.
      */
     public StageTelemetry() {
+    }
+
+    public void onInput(long count) {
+        if (count > 0) {
+            inputItems.add(count);
+        }
+    }
+
+    public void onOutput() {
+        outputItems.increment();
+    }
+
+    public void onRetry() {
+        retryAttempts.increment();
     }
 
     public void onProcessingStart() {
@@ -102,30 +130,42 @@ public final class StageTelemetry {
             double rawOutputFill,
             long totalInputWaitNanos,
             long totalOutputWaitNanos,
-            long totalDropped) {
+            long totalDropped,
+            int concurrency,
+            double baselineDecay) {
 
         long curCompleted = completedItems.sum();
         long curErrors = errorItems.sum();
         long curServiceNanos = serviceTimeNanos.sum();
+        long curInput = inputItems.sum();
+        long curOutput = outputItems.sum();
+        long curRetries = retryAttempts.sum();
 
         long deltaCompleted = Math.max(0L, curCompleted - prevCompleted);
         long deltaErrors = Math.max(0L, curErrors - prevErrors);
         long deltaService = Math.max(0L, curServiceNanos - prevServiceNanos);
         long deltaInWait = Math.max(0L, totalInputWaitNanos - prevInputWaitNanos);
         long deltaOutWait = Math.max(0L, totalOutputWaitNanos - prevOutputWaitNanos);
+        long deltaIn = Math.max(0L, curInput - prevInputItems);
+        long deltaOut = Math.max(0L, curOutput - prevOutputItems);
+        long deltaRetries = Math.max(0L, curRetries - prevRetryAttempts);
 
         prevCompleted = curCompleted;
         prevErrors = curErrors;
         prevServiceNanos = curServiceNanos;
         prevInputWaitNanos = totalInputWaitNanos;
         prevOutputWaitNanos = totalOutputWaitNanos;
+        prevInputItems = curInput;
+        prevOutputItems = curOutput;
+        prevRetryAttempts = curRetries;
 
         long deltaHandled = deltaCompleted + deltaErrors;
         long effectiveWindow = Math.max(1L, windowNanos);
+        double waitDenominator = (double) effectiveWindow * Math.max(1, concurrency);
 
         double instThroughput = (deltaCompleted * 1_000_000_000.0) / effectiveWindow;
-        double instInWaitRatio = Math.min(1.0, (double) deltaInWait / effectiveWindow);
-        double instOutWaitRatio = Math.min(1.0, (double) deltaOutWait / effectiveWindow);
+        double instInWaitRatio = Math.min(1.0, (double) deltaInWait / waitDenominator);
+        double instOutWaitRatio = Math.min(1.0, (double) deltaOutWait / waitDenominator);
         double clampedInFill = clamp01(rawInputFill);
         double clampedOutFill = clamp01(rawOutputFill);
 
@@ -137,6 +177,7 @@ public final class StageTelemetry {
             emaInputWaitRatio = instInWaitRatio;
             emaOutputWaitRatio = instOutWaitRatio;
             emaErrorRate = deltaHandled > 0 ? (double) deltaErrors / deltaHandled : 0.0;
+            emaRetryRate = deltaHandled > 0 ? (double) deltaRetries / deltaHandled : 0.0;
         } else {
             emaInputFill = ema(emaAlpha, clampedInFill, emaInputFill);
             emaOutputFill = ema(emaAlpha, clampedOutFill, emaOutputFill);
@@ -145,7 +186,19 @@ public final class StageTelemetry {
             emaOutputWaitRatio = ema(emaAlpha, instOutWaitRatio, emaOutputWaitRatio);
             if (deltaHandled > 0) {
                 double instErrorRate = (double) deltaErrors / deltaHandled;
+                double instRetryRate = (double) deltaRetries / deltaHandled;
                 emaErrorRate = ema(emaAlpha, instErrorRate, emaErrorRate);
+                emaRetryRate = ema(emaAlpha, instRetryRate, emaRetryRate);
+            }
+        }
+
+        if (deltaIn > 0) {
+            double instFanOut = Math.max(1e-3, Math.min(1e4, (double) deltaOut / deltaIn));
+            if (!hasFanOutSample) {
+                hasFanOutSample = true;
+                emaFanOut = instFanOut;
+            } else {
+                emaFanOut = ema(emaAlpha, instFanOut, emaFanOut);
             }
         }
 
@@ -158,9 +211,11 @@ public final class StageTelemetry {
             } else {
                 emaServiceNanos = ema(emaAlpha, avgService, emaServiceNanos);
                 if (avgService > 0.0) {
-                    baselineServiceNanos = baselineServiceNanos == 0.0
-                            ? avgService
-                            : Math.min(baselineServiceNanos, avgService);
+                    if (baselineServiceNanos == 0.0 || avgService < baselineServiceNanos) {
+                        baselineServiceNanos = avgService;
+                    } else {
+                        baselineServiceNanos += clamp01(baselineDecay) * (avgService - baselineServiceNanos);
+                    }
                 }
             }
         }
@@ -177,25 +232,46 @@ public final class StageTelemetry {
                 emaInputFill,
                 emaOutputFill,
                 emaInputWaitRatio,
-                emaOutputWaitRatio);
+                emaOutputWaitRatio,
+                emaFanOut,
+                emaRetryRate);
         latestSnapshot = snapshot;
         return snapshot;
     }
 
-    public StageState classify(Snapshot snapshot, AdaptiveConfig config, boolean hasInput, boolean hasOutput) {
+    public StageState classify(
+            Snapshot snapshot,
+            AdaptiveConfig.Tuning tuning,
+            boolean hasInput,
+            boolean hasOutput,
+            StageState previous) {
+        double outFill = snapshot.emaOutputFill();
+        double outWait = snapshot.emaOutputWaitRatio();
+        double inFill = snapshot.emaInputFill();
+        double inWait = snapshot.emaInputWaitRatio();
+        double dbLow = tuning.deadbandLow();
+        double dbHigh = tuning.deadbandHigh();
+        double bp = tuning.backpressuredThreshold();
+        double bi = tuning.bottleneckInputThreshold();
+        double st = tuning.starvedThreshold();
+
         if (hasOutput
-                && (snapshot.emaOutputFill() > config.backpressuredThreshold()
-                        || snapshot.emaOutputWaitRatio() > 0.50)) {
+                && (outFill > bp
+                        || outWait > 0.50
+                        || (previous == StageState.BACKPRESSURED
+                                && (outFill > Math.min(dbHigh, bp) || outWait > 0.40)))) {
             return StageState.BACKPRESSURED;
         }
         if (hasInput
-                && snapshot.emaInputFill() > config.bottleneckInputThreshold()
-                && (!hasOutput || snapshot.emaOutputFill() < config.bottleneckOutputCeiling())) {
+                && (!hasOutput || outFill < tuning.bottleneckOutputCeiling())
+                && (inFill > bi
+                        || (previous == StageState.BOTTLENECK && inFill > Math.min(dbHigh, bi)))) {
             return StageState.BOTTLENECK;
         }
         if (hasInput
-                && snapshot.emaInputFill() < config.starvedThreshold()
-                && (snapshot.emaInputWaitRatio() > 0.15 || snapshot.activeWorkers() == 0)) {
+                && (inWait > 0.15 || snapshot.activeWorkers() == 0)
+                && (inFill < st
+                        || (previous == StageState.STARVED && inFill < Math.max(dbLow, st)))) {
             return StageState.STARVED;
         }
         return StageState.BALANCED;

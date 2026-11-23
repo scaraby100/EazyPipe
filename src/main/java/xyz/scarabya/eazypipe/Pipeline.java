@@ -25,6 +25,7 @@ import java.util.function.BiConsumer;
 import java.util.function.Function;
 import java.util.stream.Collector;
 import java.util.stream.Collectors;
+import xyz.scarabya.eazypipe.adaptive.AdaptiveConfig;
 
 /**
  * Immutable, reusable fluent pipeline builder producing items of type {@code T}.
@@ -164,15 +165,30 @@ public final class Pipeline<T> {
      * Throttles throughput passing through this point in the pipeline to at most {@code permitsPerSecond}.
      */
     public Pipeline<T> rateLimit(double permitsPerSecond) {
-        return rateLimit(StageConfig.defaults(), permitsPerSecond);
+        return rateLimit(StageConfig.defaults(), permitsPerSecond, 1);
+    }
+
+    /**
+     * Throttles throughput passing through this point in the pipeline to at most {@code permitsPerSecond}
+     * while allowing an initial/idle burst of up to {@code burst} permits.
+     */
+    public Pipeline<T> rateLimit(double permitsPerSecond, int burst) {
+        return rateLimit(StageConfig.defaults(), permitsPerSecond, burst);
     }
 
     /**
      * Configurable overload of {@link #rateLimit(double)}.
      */
     public Pipeline<T> rateLimit(StageConfig stageConfig, double permitsPerSecond) {
+        return rateLimit(stageConfig, permitsPerSecond, 1);
+    }
+
+    /**
+     * Configurable overload of {@link #rateLimit(double, int)}.
+     */
+    public Pipeline<T> rateLimit(StageConfig stageConfig, double permitsPerSecond, int burst) {
         Objects.requireNonNull(stageConfig, "stageConfig must not be null");
-        return appendStage(new StageDefinition.RateLimitStage<>(stageConfig, permitsPerSecond));
+        return appendStage(new StageDefinition.RateLimitStage<>(stageConfig, permitsPerSecond, burst));
     }
 
     /**
@@ -232,12 +248,37 @@ public final class Pipeline<T> {
 
     /**
      * Returns a copy of this pipeline using the supplied {@link PipeConfig}.
+     * Any subsequent {@code configure(...)} call replaces earlier {@link #adaptive} settings.
      */
     public Pipeline<T> configure(PipeConfig config) {
         return new Pipeline<>(
                 Objects.requireNonNull(config, "config must not be null"),
                 sourceStage,
                 intermediateStages);
+    }
+
+    /**
+     * Enables end-to-end adaptive concurrency control using {@link AdaptiveConfig#balanced()}.
+     *
+     * <p>A subsequent {@link #configure(PipeConfig)} call overrides this setting.
+     *
+     * @return a new {@link Pipeline} with adaptive concurrency enabled
+     */
+    public Pipeline<T> adaptive() {
+        return adaptive(AdaptiveConfig.balanced());
+    }
+
+    /**
+     * Enables end-to-end adaptive concurrency control using the supplied {@link AdaptiveConfig}.
+     *
+     * <p>A subsequent {@link #configure(PipeConfig)} call overrides this setting.
+     *
+     * @param adaptiveConfig the adaptive configuration to apply (must not be {@code null})
+     * @return a new {@link Pipeline} with the specified adaptive configuration
+     */
+    public Pipeline<T> adaptive(AdaptiveConfig adaptiveConfig) {
+        Objects.requireNonNull(adaptiveConfig, "adaptiveConfig must not be null");
+        return configure(config.withAdaptive(adaptiveConfig));
     }
 
     // -------------------------------------------------------------------------
@@ -285,6 +326,9 @@ public final class Pipeline<T> {
 
     /**
      * Configurable overload of {@link #startBroadcast(List)}.
+     *
+     * <p>An item counts toward {@link PipeStats#itemsConsumed()} only once every branch completes it without
+     * skip or overflow drop; items evicted via {@link OverflowPolicy#DROP_OLDEST} are never counted as consumed.
      */
     public PipeExecution<Void> startBroadcast(StageConfig stageConfig, List<PipeSink<? super T>> sinks) {
         Objects.requireNonNull(stageConfig, "stageConfig must not be null");

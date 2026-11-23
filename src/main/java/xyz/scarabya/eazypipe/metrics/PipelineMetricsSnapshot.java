@@ -16,7 +16,9 @@
 package xyz.scarabya.eazypipe.metrics;
 
 import java.time.Duration;
+import java.util.ArrayList;
 import java.util.List;
+import java.util.Locale;
 import java.util.Objects;
 import xyz.scarabya.eazypipe.adaptive.ScalingDecision;
 
@@ -44,5 +46,49 @@ public record PipelineMetricsSnapshot(
         Objects.requireNonNull(elapsed, "elapsed must not be null");
         stages = List.copyOf(stages);
         recentDecisions = List.copyOf(recentDecisions);
+    }
+
+    /**
+     * Returns a compact multi-line human-readable summary suitable for application logs.
+     *
+     * @return formatted metrics summary
+     */
+    public String summary() {
+        List<String> lines = new ArrayList<>(stages.size() + 2);
+        lines.add(String.format(
+                Locale.ROOT,
+                "elapsed=%dms produced=%d consumed=%d skipped=%d dropped=%d",
+                elapsed.toMillis(),
+                itemsProduced,
+                itemsConsumed,
+                errorsSkipped,
+                itemsDropped));
+        for (StageMetricsSnapshot s : stages) {
+            lines.add(String.format(
+                    Locale.ROOT,
+                    "  %s %s %s c=%d active=%d thr=%.1f/s svc=%.2f ms in=%.0f%% out=%.0f%% fanout=%s flow=%s",
+                    s.stageName(),
+                    s.stageKind(),
+                    s.stageState(),
+                    s.targetConcurrency(),
+                    s.activeWorkers(),
+                    s.emaThroughputPerSec(),
+                    s.emaServiceTimeMillis(),
+                    s.inputFillRatio() * 100.0,
+                    s.outputFillRatio() * 100.0,
+                    formatRatio(s.fanOutRatio()),
+                    formatRatio(s.relativeFlow())));
+        }
+        if (!recentDecisions.isEmpty()) {
+            lines.add("  last: " + recentDecisions.get(recentDecisions.size() - 1).explain());
+        }
+        return String.join("\n", lines);
+    }
+
+    private static String formatRatio(double value) {
+        if (Double.isNaN(value) || Double.isInfinite(value)) {
+            return "-";
+        }
+        return String.format(Locale.ROOT, "%.2f", value);
     }
 }
