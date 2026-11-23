@@ -28,14 +28,25 @@ EazyPipe lets you compose producer, transformation, fan-out, and consumer stages
 
 ---
 
-## Installation (`2.0.0-RC1` — GitHub Release & Local)
+## Installation (`2.0.0-RC1` — GitHub Release & Local Maven)
 
-While pre-release builds are distributed outside Maven Central, you can download the JAR directly from [GitHub Releases (`v2.0.0-RC1`)](https://github.com/jucasoft/EazyPipe/releases/tag/v2.0.0-RC1) and use it locally in any Maven or Gradle project.
+Pre-release builds are distributed via [GitHub Releases (`v2.0.0-RC1`)](https://github.com/jucasoft/EazyPipe/releases/tag/v2.0.0-RC1) so you can use EazyPipe in any **Java 21+ Maven project** without waiting for Maven Central publishing.
+
+### GitHub Release & Downloadable Artifacts
+
+Every `v*` tag triggers [`.github/workflows/release.yml`](.github/workflows/release.yml), which compiles the module on Java 21, runs the full test suite, and attaches the release bundle (`pre-release` when the tag includes a suffix such as `-RC1`):
+
+- `EazyPipe-2.0.0-RC1.jar` — JPMS library JAR (`module xyz.scarabya.eazypipe`, `requires java.base`, exporting `xyz.scarabya.eazypipe`, `xyz.scarabya.eazypipe.adaptive`, and `xyz.scarabya.eazypipe.metrics`; internal engine encapsulated in `xyz.scarabya.eazypipe.internal.adaptive`)
+- `EazyPipe-2.0.0-RC1-sources.jar` — Java sources for IDE navigation/debugging
+- `EazyPipe-2.0.0-RC1-javadoc.jar` — Compiled Javadoc archive
+- `EazyPipe-2.0.0-RC1.pom` — Project POM metadata (`xyz.scarabya:EazyPipe:2.0.0-RC1`)
+- `SHA256SUMS.txt` — SHA-256 checksums for all attached artifacts
 
 ### Option A — Download Release JARs and install into local Maven (`~/.m2`)
 
-Download `EazyPipe-2.0.0-RC1.jar`, `EazyPipe-2.0.0-RC1-sources.jar`, `EazyPipe-2.0.0-RC1-javadoc.jar`, and `EazyPipe-2.0.0-RC1.pom` from the release page, verify `SHA256SUMS.txt` if desired, and install them once:
+Download the 4 artifact files (and `SHA256SUMS.txt`) from [v2.0.0-RC1](https://github.com/jucasoft/EazyPipe/releases/tag/v2.0.0-RC1), optionally verify checksums (`sha256sum -c SHA256SUMS.txt` on Linux/macOS or `Get-FileHash -Algorithm SHA256` on PowerShell), and install them once into your local Maven repository:
 
+**Linux / macOS:**
 ```bash
 mvn install:install-file \
   -Dfile=EazyPipe-2.0.0-RC1.jar \
@@ -44,7 +55,16 @@ mvn install:install-file \
   -DpomFile=EazyPipe-2.0.0-RC1.pom
 ```
 
-Then add the dependency in your `pom.xml`:
+**Windows PowerShell:**
+```powershell
+mvn install:install-file `
+  -Dfile=EazyPipe-2.0.0-RC1.jar `
+  -Dsources=EazyPipe-2.0.0-RC1-sources.jar `
+  -Djavadoc=EazyPipe-2.0.0-RC1-javadoc.jar `
+  -DpomFile=EazyPipe-2.0.0-RC1.pom
+```
+
+Then declare the dependency in your Java project's `pom.xml`:
 
 ```xml
 <dependency>
@@ -54,28 +74,23 @@ Then add the dependency in your `pom.xml`:
 </dependency>
 ```
 
-**Gradle (Kotlin DSL) — using `mavenLocal()` or a local JAR in `libs/`:**
+If your consuming project uses Java Modules (`module-info.java`):
 
-```kotlin
-repositories {
-    mavenLocal()
-    mavenCentral()
-}
-
-dependencies {
-    implementation("xyz.scarabya:EazyPipe:2.0.0-RC1")
-    // Or drop EazyPipe-2.0.0-RC1.jar directly into libs/:
-    // implementation(files("libs/EazyPipe-2.0.0-RC1.jar"))
+```java
+module com.example.myapp {
+    requires xyz.scarabya.eazypipe;
 }
 ```
 
-### Option B — Build & install directly from source
+### Option B — Build & install directly from source (Maven Wrapper)
 
 ```bash
 git clone https://github.com/jucasoft/EazyPipe.git
 cd EazyPipe
 ./mvnw -B clean install        # Windows PowerShell: .\mvnw.cmd -B clean install
 ```
+
+This runs the JUnit 5 suite and installs `EazyPipe-2.0.0-RC1.jar`, `-sources.jar`, `-javadoc.jar`, and `.pom` into `~/.m2/repository/xyz/scarabya/EazyPipe/2.0.0-RC1/`.
 
 ---
 
