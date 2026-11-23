@@ -124,12 +124,12 @@ public class PipelineThroughputBenchmark {
 
     @Benchmark
     public void blockingQueueManual(Blackhole bh) throws Exception {
-        int workers = isIo ? IO_CONCURRENCY : cores;
+        int workers = isIo ? IO_CONCURRENCY : Math.max(1, cores / 2);
         BlockingQueue<Integer> q01 = new ArrayBlockingQueue<>(256);
         BlockingQueue<Integer> q12 = new ArrayBlockingQueue<>(256);
         ExecutorService exec = isIo
                 ? Executors.newVirtualThreadPerTaskExecutor()
-                : Executors.newFixedThreadPool(cores);
+                : Executors.newFixedThreadPool(workers * 2 + 1);
 
         try {
             AtomicInteger stage1Remaining = new AtomicInteger(workers);
